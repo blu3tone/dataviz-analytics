@@ -1,0 +1,14 @@
+After cloning the repository: 
+
+1. Download the meraki log files you want to analyze to the meraki/data directory.  For example 
+the files at: 
+
+https://drive.google.com/drive/folders/1jSxlkQ37FtAx0YMwqjOn8yXWH6ECPwQ-
+
+which are too big for GitHub.
+
+2. Edit the list of files at around line 320 of logreader.py to match. The files must be listed in reverse time order 
+(i.e from newest to oldest)
+
+3. From the command line execute:
+    python logreader.py

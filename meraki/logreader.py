@@ -3,7 +3,15 @@ import json
 import string
 import operator
 import time
+import itertools
+import os
 from collections import Counter
+
+#os.environ['TZ']='US/Eastern'
+#time.tzset()
+#print "Processing event times in the %s time zone" % (",".join(time.tzname))
+
+DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
 import  re
 re_digits= re.compile(r'(\d+)')
@@ -23,7 +31,7 @@ def cmp_strings_with_embedded_numbers(a,b):
 
 
 def day2String(day):
-    return time.strftime("%a %b %d %Y", time.localtime(day*24*3600))
+    return time.strftime("%a %b %d %Y", time.gmtime(day*24*3600))
     
 
 with open('data/AccessPoints.json') as APfile:    
@@ -113,7 +121,17 @@ class ap(object):
         for day in sorted(self.clients.keys()):
             print ("%12s: %6d") % (day2String(day), len(self.clients[day]))
         
-
+        
+    def printClientCountByWeekDay(self):
+        weekdayTotals = [0]*7
+        
+        for day in (self.clients.keys()):
+            dayofweek = time.gmtime(day*24*3600+40000).tm_wday
+            weekdayTotals[dayofweek] += len(self.clients[day])
+                                            
+        for wDay in range (7):
+            print ("%4s: %6d") % (DoW[wDay], weekdayTotals[wDay])
+            
 '''
 The event log is scanned in reverse time order.  
 Disassociation events are thus seen before their corresponding association event
@@ -177,7 +195,21 @@ When processing a new disassociation message:
 #
 #  The amount to fix is determined from the difference between the 
 #  times of the anticipated Association events
-              
+#
+#  Case 3   Missing association event
+#
+#            ------------Time Increasing ------>
+#         <------------File Read direction ---------           
+#
+#          AS2         DIS2         AS1      DIS1
+#
+#           ^          ^             ^         ^
+#           |          |             |         |
+#            Duration 2               Duration 1 
+#
+# A second Disassociation events without processing the first  
+# Process the pending association number 1 and replace the expected
+# association event.
 
 '''
             
@@ -206,6 +238,32 @@ class client(object):
         
         
     def appendEvent(self, event, ap):
+        
+        def ProcessAnyAPAssociation():
+            if (self.AnyAPExpectedAssociationTime 
+                and eventTime - self.AnyAPExpectedAssociationTime) < 0.2:
+                self.clientConnectTime += self.AllAPAssociatedDuration
+                self.AnyAPExpectedAssociationTime=0
+                self.AllAPAssociatedDuration=0
+                
+        def ProcessAPAssociation():
+            if (ap in self.ExpectedAssociationTime 
+                and eventTime - self.ExpectedAssociationTime[ap] < 0.5):
+                lap = ap
+                et = self.ExpectedAssociationTime.pop(lap)
+                duration = self.associatedDuration.pop(lap,0)
+    
+                self.duration.setdefault(day,{})
+                if not lap in self.duration[day]:
+                    self.duration[day][lap]=duration
+                else:
+                    self.duration[day][lap]+=duration
+    
+                if not lap in self.totalConnectTime:
+                    self.totalConnectTime[lap] = duration
+                else: 
+                    self.totalConnectTime[lap] += duration
+            
         eventTime = event["time_f"]
        
         hour = int(eventTime//3600)
@@ -217,76 +275,73 @@ class client(object):
         self.aps.add(ap)
 
         if (event["el_type"] == "association"): 
-            
-            if (self.AnyAPExpectedAssociationTime 
-                and eventTime - self.AnyAPExpectedAssociationTime) < 0.2:
-                self.clientConnectTime += self.AllAPAssociatedDuration
-                self.AnyAPExpectedAssociationTime=0
-                self.AllAPAssociatedDuration=0
-            
-            if (ap in self.ExpectedAssociationTime 
-               and eventTime - self.ExpectedAssociationTime[ap] < 0.5):
-                lap = ap
-                et = self.ExpectedAssociationTime.pop(lap)
-                duration = self.associatedDuration.pop(lap,0)
-                
-                self.duration.setdefault(day,{})
-                if not lap in self.duration[day]:
-                    self.duration[day][lap]=duration
-                else:
-                    self.duration[day][lap]+=duration
-    
-                if not lap in self.totalConnectTime:
-                    self.totalConnectTime[lap] = duration
-                else: 
-                    self.totalConnectTime[lap] += duration
-                 
-                # Mark the days and hours client was connected 
-                self.days.update(set(range(day, day + int(duration//24//3600) + 1)))
-                self.hours.update(set(range(hour, hour + int(duration//3600) + 1)))
-                 
-      
+            ProcessAnyAPAssociation()
+            ProcessAPAssociation()
+            # Mark the days and hours client was connected 
+            #self.days.update(set(range(day, day + int(duration//24//3600) + 1)))
+            #self.hours.update(set(range(hour, hour + int(duration//3600) + 1)))
+       
         elif (event["el_type"] == "disassociation"): 
             duration = float(event["details"]["duration"])  
             
-            # Events in the log file are read in reverse time order.  Thus
-            # the disassociation event is read before the matching association event.
-            #  
-            
-            expectedAssTime = eventTime - duration
-    
-            # Two types of running total:
-            # 1 Disassociations and associations with any AP
-            # 2 Disassociations and associations on a per AP basis
-            
-            
-            if not self.AnyAPExpectedAssociationTime:
-                fix=0
-                self.AnyAPExpectedAssociationTime = expectedAssTime
-                self.AllAPAssociatedDuration = duration
-            else:
-                fix = self.AnyAPExpectedAssociationTime - expectedAssTime
-                if fix > 0:
+            if duration < 12*3600:
+                
+                # Events in the log file are read in reverse time order.  Thus
+                # the disassociation event is read before the matching association event.
+                #  
+                
+                expectedAssTime = eventTime - duration
+        
+                # Two types of running total:
+                # 1 Disassociations and associations with any AP
+                # 2 Disassociations and associations on a per AP basis
+                
+                
+                if not self.AnyAPExpectedAssociationTime:
+                    fix=0
                     self.AnyAPExpectedAssociationTime = expectedAssTime
-                    self.AllAPAssociatedDuration += fix
-                    
-            if not ap in self.ExpectedAssociationTime:
-                fixap=0
-                self.ExpectedAssociationTime[ap] = expectedAssTime
-                self.associatedDuration[ap] = duration
-            else:
-               
-                fixap = self.ExpectedAssociationTime[ap] - expectedAssTime
-                if fixap > 0:
+                    self.AllAPAssociatedDuration = duration
+                else:
+                    if self.AnyAPExpectedAssociationTime - eventTime > 1:
+                        # Expected association didn't happen 
+                        # Process the event now
+                        
+                        ProcessAnyAPAssociation()
+                        fix=0
+                        self.AnyAPExpectedAssociationTime = expectedAssTime
+                        self.AllAPAssociatedDuration = duration                        
+                    else:    
+                        fix = self.AnyAPExpectedAssociationTime - expectedAssTime
+                        if fix > 0:
+                            self.AnyAPExpectedAssociationTime = expectedAssTime
+                            self.AllAPAssociatedDuration += fix
+                        
+                if not ap in self.ExpectedAssociationTime:
+                    fixap=0
                     self.ExpectedAssociationTime[ap] = expectedAssTime
-                    self.associatedDuration[ap] += fixap 
-           
-            starthour = hour - int(duration//3600)     # hours since jan 1 1970  
-            startday = day - int(duration//3600//24)
-
-            # Mark the days and hours client is connected 
-            self.days.update(set(range(startday, day + 1)))
-            self.hours.update(set(range(starthour, hour + 1)))                
+                    self.associatedDuration[ap] = duration
+                else:
+                    if self.ExpectedAssociationTime[ap] - eventTime > 1:
+                        # The expected association should have already been processed
+                        # So process it now, and simply queue the new disassociation
+                        ProcessAPAssociation()
+                        fixap=0
+                        self.ExpectedAssociationTime[ap] = expectedAssTime
+                        self.associatedDuration[ap] = duration                        
+                    else:
+                        fixap = self.ExpectedAssociationTime[ap] - expectedAssTime
+                        if fixap > 1000000:
+                            print "Large Fixap value %d on mac %s at time %f" %(fixap, self.mac, eventTime)
+                        if fixap > 0:
+                            self.ExpectedAssociationTime[ap] = expectedAssTime
+                            self.associatedDuration[ap] += fixap 
+                   
+                starthour = hour - int(duration//3600)     # hours since jan 1 1970  
+                startday = day - int(duration//3600//24)
+    
+                # Mark the days and hours client is connected 
+                self.days.update(set(range(startday, day + 1)))
+                self.hours.update(set(range(starthour, hour + 1)))                
 
     def ClientRange(self):
         # The count of APs connected to by this client for each calendar day
@@ -338,6 +393,8 @@ class eventFile(object):
  
             self.LoadEvents(d) 
             
+        self.clientDailyConnectionTimes()
+        self.clientConnectionTimes()
         self.clientConnectDurations()
         self.printClientWhenSeenCounts()
         self.printAccessPointUsage()
@@ -355,7 +412,7 @@ class eventFile(object):
         
             for event in d:
                 eventTime = event["time_f"]
-                day = time.strftime("%Y-%m-%d", time.localtime(eventTime))
+                day = time.strftime("%Y-%m-%d", time.gmtime(eventTime))
                 
                 apID = event["ap_id"]
                 # Add AP to a dictionary if we haven't seen it before
@@ -398,6 +455,13 @@ class eventFile(object):
             a = self.APDict[apID]
             print "AP %d: (%s)" % (apID, a.name) 
             a.printClientCountByDay()
+  
+        print("\n Access by Day of Week")  
+  
+        for apID in sorted(self.APDict.keys()):
+            a = self.APDict[apID]
+            print "AP %d: (%s)" % (apID, a.name) 
+            a.printClientCountByWeekDay()  
             
         
     def printRangeByDay(self):    
@@ -440,29 +504,32 @@ class eventFile(object):
             
         print ("\n\nCount of calendar days during which clients were observed")    
             
-        
+        j=0
         for i in sorted(seenDays):
             print "%4d: %4d,"  % (i, seenDays[i]),
-            if i%10 == 0: 
+            j+=1
+            if j>=10:
+                j=0
                 print
                                   
+        j=0        
         print ("\n\nCount of hours during which clients were observed")    
         for i in sorted(seenHours):
             print "%4d: %4d,"  % (i, seenHours[i]),
-            if i%10 == 0: 
+            if j >= 10: 
                 print
+                j=0
                                     
        
     def clientConnectDurations(self):
        
-        print "\nClient Connect time distribution [hours] (AP)",
+        print "\n\n\nClient Connect time distribution in hours, for 1000 most active clients(AP)",
        
         durations = sorted([(int(c.ClientDuration()/3600),int(c.ClientAPDuration()/3600)) 
                             for c in self.ClientDict.values()], reverse=True)
         
         maxduration, maxmac = max([(int(c.ClientDuration()/3600),c.mac) 
                                    for c in self.ClientDict.values()])
-       
         
         c = 0
         
@@ -475,7 +542,52 @@ class eventFile(object):
            
         print "\nMax Duration %d on mac %s" % (maxduration, maxmac)
         
-           
+    def clientConnectionTimes(self):
+        
+        clientCounts = [[0 for x in range(24)] for y in range(7)]
+        
+        for c in self.ClientDict.values():
+            for day in c.days:
+                w_day = time.gmtime(day*24*3600).tm_wday
+                for hour in (set(range(day*24, (day+1)*24)) & c.hours):
+                    hourInDay = hour % 24
+                    clientCounts[w_day][hourInDay] += 1
+                    
+        print "\n%6s" % (" "),
+        for hour in range(24):
+            print "%6d" % (hour),
+        
+        for day in range(7):
+            print "\n%6s" % (DoW[day]),
+            for hour in range(24):
+                print "%6d" % (clientCounts[day][hour]),
+        
+        print
+    
+    def clientDailyConnectionTimes(self):
+            
+        clientHours =  dict(Counter(itertools.chain(*(c.hours for c in self.ClientDict.values()))))
+        
+        start = min(clientHours) 
+        start-=start%24
+        
+        stop = max(clientHours)
+        stop-=(stop)%24
+
+        print "\n%18s" % (" "),
+        for hour in range(24):
+            print "%4d" % (hour),
+   
+        
+        for hour in range(start,stop+24):
+            if (hour%24) == 0:
+                print "\n%18s" % (day2String(hour//24)),
+                
+            print "%4d" % (clientHours.get(hour, 0)),
+       
+      
+        print
+            
      
 def __test():
     

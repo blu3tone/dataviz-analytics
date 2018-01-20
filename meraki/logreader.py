@@ -6,13 +6,6 @@ import time
 import itertools
 import os
 from collections import Counter
-
-#os.environ['TZ']='US/Eastern'
-#time.tzset()
-#print "Processing event times in the %s time zone" % (",".join(time.tzname))
-
-DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
-
 import  re
 re_digits= re.compile(r'(\d+)')
 
@@ -29,11 +22,20 @@ def cmp_strings_with_embedded_numbers(a,b):
         if cmp(x,y): return cmp(x,y)
     return cmp(len(ap),len(bp))
 
+os.environ['TZ']='US/Eastern'
+time.tzset()
+print "Processing event times in the %s time zone" % (",".join(time.tzname))
+
+DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+
+def time2DayAndHour(eventTime):        
+    hour = int(eventTime - time.timezone)//3600 
+    day = hour//24
+    return day,hour
 
 def day2String(day):
-    return time.strftime("%a %b %d %Y", time.gmtime(day*24*3600))
-    
-
+    return time.strftime("%a %b %d %Y", time.localtime(day*24*3600))
+ 
 with open('data/AccessPoints.json') as APfile:    
     APInformation = json.load(APfile)
     APfile.close()
@@ -111,8 +113,9 @@ class ap(object):
         self.index = len(apList) - 1
         
     def appendEvent(self, event, client):
-        hour = float(event["time_f"]) // 3600
-        day = hour // 24        
+        
+        eventTime = float(event["time_f"])
+        day,hour = time2DayAndHour(eventTime)
 
         self.clients.setdefault(day,set()).add(client)
 
@@ -126,7 +129,7 @@ class ap(object):
         weekdayTotals = [0]*7
         
         for day in (self.clients.keys()):
-            dayofweek = time.gmtime(day*24*3600+40000).tm_wday
+            dayofweek = time.localtime(day*24*3600+40000).tm_wday
             weekdayTotals[dayofweek] += len(self.clients[day])
                                             
         for wDay in range (7):
@@ -207,7 +210,7 @@ When processing a new disassociation message:
 #           |          |             |         |
 #            Duration 2               Duration 1 
 #
-# A second Disassociation events without processing the first  
+# A second Disassociation event is read without first reading the association for  first  
 # Process the pending association number 1 and replace the expected
 # association event.
 
@@ -265,10 +268,8 @@ class client(object):
                     self.totalConnectTime[lap] += duration
             
         eventTime = event["time_f"]
+        day, hour = time2DayAndHour(eventTime)
        
-        hour = int(eventTime//3600)
-        day = int(hour//24)
-        
         self.events.setdefault(day,[]).append(event)
         self.days.add(day)
         self.hours.add(hour)
@@ -412,7 +413,7 @@ class eventFile(object):
         
             for event in d:
                 eventTime = event["time_f"]
-                day = time.strftime("%Y-%m-%d", time.gmtime(eventTime))
+                date = time.strftime("%Y-%m-%d", time.localtime(eventTime))
                 
                 apID = event["ap_id"]
                 # Add AP to a dictionary if we haven't seen it before
@@ -435,7 +436,7 @@ class eventFile(object):
                     etype = "A"
                     duration = 0
                 
-                print >> csvFile, "%20s, %s, %16s, %s, %s, %f" % (clientMac, day, eventTime, apID, etype, duration)
+                print >> csvFile, "%20s, %s, %16s, %s, %s, %f" % (clientMac, date, eventTime, apID, etype, duration)
                 
                 c.appendEvent(event, a)
                 a.appendEvent(event, c)
@@ -548,7 +549,7 @@ class eventFile(object):
         
         for c in self.ClientDict.values():
             for day in c.days:
-                w_day = time.gmtime(day*24*3600).tm_wday
+                w_day = time.localtime(day*24*3600).tm_wday
                 for hour in (set(range(day*24, (day+1)*24)) & c.hours):
                     hourInDay = hour % 24
                     clientCounts[w_day][hourInDay] += 1

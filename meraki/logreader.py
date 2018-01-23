@@ -28,7 +28,8 @@ print "Processing event times in the %s time zone" % (",".join(time.tzname))
 
 DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
-def time2DayAndHour(eventTime):        
+def time2DayAndHour(eventTime):  
+    # Returns day,hour since 1 Jam 1970
     hour = int(eventTime - time.timezone)//3600 
     day = hour//24
     return day,hour
@@ -39,6 +40,16 @@ def day2String(day):
 with open('data/AccessPoints.json') as APfile:    
     APInformation = json.load(APfile)
     APfile.close()
+
+
+    
+class NetworkGraphEdge(object):
+    def __init__(self,parent,child):
+        self.parent=parent
+        self.child=child
+        self.difference=tuple(sorted(set(parent.uid) - set(child.uid)))
+        # Additional edge attributes go here
+
 
 APNetworkDict= {}    #  Look up by UID, a tuple of sorted AP IDs in the network
 apList = []  # List of ap instances indexed by ap_id
@@ -55,14 +66,29 @@ def APNetwork(APList, client):
 class _APNetwork(object):
     def __init__(self, uid, client): 
         self.uid=uid
-        self.clients=[client]       # a list of clients that connect to this network 
-        self.size = len(uid)        # Number of APs in the network
-        APNetworkDict[uid] = self   # Add to the dictionary
-          
+        self.clients=[]    # list of client devices that have connected with this network 
+        if client: self.clients.append(client)       
+        self.size = len(uid)            # Number of APs in the network
+        APNetworkDict[uid] = self       # Add to the dictionary
+        self.children=[]            
+        self.parent=None             
+        self.parentEdge=None
+        
+    def __str__(self):
+        return str(self.uid)
+        
+    def ancestory(self, parent):
+        self.parent=parent
+        self.parentEdge = NetworkGraphEdge(parent,self)
+        parent.children.append((self, self.parentEdge))
+      
     def APs(self): 
         # Return a list of instances of class ap that represent APs in the network
         return sorted([apList[i] for i in self.uid])
-
+    
+    def totalClients(self):
+        return len(self.clients) + sum(child.totalClients() for child,edge in self.children)
+ 
 def PrintAPNClientCountDistribution():
     """
     For each apn, list by node count the number of clients that subscribe to the network
@@ -93,6 +119,62 @@ def PrintAPNClientCountDistribution():
             print ("[%d:%d]" % (instances,clientCount)), 
         print
 
+
+
+
+def APNHierarchy():
+    
+    '''
+    Build a graph that shows how the AP networks are related 
+    Start with all APs, then diff with Networks with fewer nodes
+    
+    Create a graph with the universal set at the root
+    
+    Child nodes are created by eliminating APs from a parent node.
+    The edges list the APs that were eliminated
+
+    '''
+    candidates=sorted(([(len(apn.uid), apn) for apn in APNetworkDict.values()]) ,reverse=True)
+    rootuid = tuple(range(len(apList)))
+    root=_APNetwork(rootuid,None)        
+
+    # list of all Networks in reverse size order:
+    parentSet = set([root])
+
+    for length,apn in candidates:
+        # Parent network is networks with the fewest number of additional nodes and the largest number of clients
+        distance, size, parent = min(((len(set(p.uid)-set(apn.uid)),len(p.clients),p) for p in parentSet 
+                                      if set(apn.uid).issubset(set(p.uid))))
+        apn.ancestory(parent) 
+        
+        parentSet.add(apn)  # Potentially a parent of a smaller network
+   
+   
+    # Print the Network Hierarchy
+    print ('\n\nNetwork Hierarchy')
+    
+    ListAPNHierarchy(root)
+   
+def ListAPNHierarchy(node, offset=0):   
+    
+    print ''' 
+Relationships between groupings of APs based on the number of client devices that associated with them,
+The hierarchy shows the relationship between these groupings or "AP Networks". 
+
+The display is  x (y)  [z]
+
+x is the number of APs in the grouping
+y is the number of clients that connected with all nodes in this grouping 
+z is the number of clients that connected to this grouping, including connections to clients that connected to
+  any subset.  i.e. the number of clients that connected to any of the nodes in the grouping 
+    '''
+    
+    print "%s %d (%d) [%d]" % (" "*offset, len(node.uid), len(node.clients),node.totalClients())
+
+    for __,__,child in sorted(((-child.totalClients(), len(edge.difference), child)  for child,edge in node.children)):
+        if len(child.children):
+            ListAPNHierarchy(child, offset+3)
+    
 class ap(object):
     def __init__(self,event):
         self.ap_id = event["ap_id"]
@@ -204,15 +286,14 @@ When processing a new disassociation message:
 #            ------------Time Increasing ------>
 #         <------------File Read direction ---------           
 #
-#          AS2         DIS2         AS1      DIS1
-#
+#          AS2         DIS2        (AS1)      DIS1
+#                                 missing  
 #           ^          ^             ^         ^
 #           |          |             |         |
 #            Duration 2               Duration 1 
 #
-# A second Disassociation event is read without first reading the association for  first  
-# Process the pending association number 1 and replace the expected
-# association event.
+# A second Disassociation event is read without first reading the association for an earlier event. 
+# Process the pending association event, then proceed with the next as a new event.
 
 '''
             
@@ -405,6 +486,7 @@ class eventFile(object):
             client.APNetwork()
 
         PrintAPNClientCountDistribution()
+        APNHierarchy()
                         
        
     def LoadEvents(self,d):
@@ -483,18 +565,20 @@ class eventFile(object):
         that visited the number of APs given in the column header on the given date
         '''        
         
+        columns = 20
+        
         print Commentary        
         print "%16s" % ("Range "),        
-        for count in range(1,11): 
+        for count in range(1,columns): 
             print "%5d" % (count),
         print    
         
         for day in sorted(rangeCounts.keys()):      
             print "%16s" % (day2String(day)),        
-            for count in range(1,11): 
+            for count in range(1,columns): 
                 print "%5d" % (rangeCounts[day].get(count,0)),
               
-            for count in sorted(set(rangeCounts[day]) - set(range(11))):    
+            for count in sorted(set(rangeCounts[day]) - set(range(columns))):    
                 print "(%d,%d)" % (count, rangeCounts[day][count]),
             print    
 
@@ -514,17 +598,18 @@ class eventFile(object):
                 print
                                   
         j=0        
-        print ("\n\nCount of hours during which clients were observed")    
+        print ("\n\nCount of hour buckets during which clients were observed")    
         for i in sorted(seenHours):
             print "%4d: %4d,"  % (i, seenHours[i]),
-            if j >= 10: 
+            j+=1
+            if j>=10: 
                 print
                 j=0
                                     
        
     def clientConnectDurations(self):
        
-        print "\n\n\nClient Connect time distribution in hours, for 1000 most active clients(AP)",
+        print "\n\n\nClient Connect time distribution in hour buckets, for 1000 most active clients(AP)",
        
         durations = sorted([(int(c.ClientDuration()/3600),int(c.ClientAPDuration()/3600)) 
                             for c in self.ClientDict.values()], reverse=True)

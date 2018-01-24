@@ -1,1 +1,352 @@
-{"246656712527232": {"name": "TrinityIndoorrearSouth", "location": [40.7079142210024, -74.0119895226599]}, "149624924911168": {"name": "Replacesmr58@19fulton", "location": [40.7070877, -74.003546]}, "149624924915616": {"name": "135JohnStreetreplacement", "location": [37.4180951010362, -122.098531723022]}, "293256": {"name": "StPaulsroof02", "location": [40.7113543546941, -74.0094307938125]}, "263306": {"name": "199Water(replacement)", "location": [40.7065842614777, -74.0044717490127]}, "149624924909984": {"name": "LPBroadwayandVesey", "location": [40.7116808059659, -74.0084230899811]}, "149624923327208": {"name": "TrinityindoorAltarNorth", "location": [40.7080646800844, -74.0120860821844]}, "308622": {"name": "52Broadwaysouth(UFT)", "location": [40.7065201455958, -74.0125610232462]}, "6014352": {"name": "StPaulsroof03", "location": [40.7112989519304, -74.0089312323835]}, "289624": {"name": "ElevatedAcre", "location": [40.7031494313282, -74.0083145495737]}, "149624924913072": {"name": "LPBroadwaySFulton", "location": [40.7106052777891, -74.0092545747757]}, "289774": {"name": "HeliPort", "location": [40.7013985338105, -74.0090346336365]}, "208150": {"name": "ParishCenter1", "location": [40.7078715146231, -74.0131385923632]}, "6008368": {"name": "Trinitysteeple02", "location": [40.707870498068, -74.0117849708258]}, "5276028": {"name": "VietnamPlazaWest", "location": [40.7030957501859, -74.0098875761032]}, "293148": {"name": "WestGateway", "location": [40.7079711362727, -74.0094092578875]}, "246656709808192": {"name": "StPaulsindoor02", "location": [40.7112677878556, -74.0092872118112]}, "289568": {"name": "Pier15West", "location": [40.7050765042656, -74.0026280883467]}, "6006960": {"name": "125MaidenlaneSouth", "location": [40.7063152588123, -74.0060800461652]}, "290340": {"name": "55waterEast", "location": [40.7029254882542, -74.0095807316538]}, "289702": {"name": "Pier15East", "location": [40.7046909855223, -74.0023115876829]}, "149624923327148": {"name": "TrinityindoorAltarSouth", "location": [40.7081643082084, -74.0122899300695]}, "6005680": {"name": "LPBroadwayNofTrinity", "location": [40.7082662999098, -74.0112765134472]}, "293812": {"name": "52Broadwaynorth(UFT)", "location": [40.706621809303, -74.0124751925578]}, "207546": {"name": "StoneStreet(East)", "location": [40.7043867986026, -74.010123074022]}, "292618": {"name": "EastGateway", "location": [40.707662064093, -74.0089237512075]}, "283328": {"name": "Pier11", "location": [40.7033042594045, -74.0063814729911]}, "6009568": {"name": "Trinitysteeple01", "location": [40.7079518273971, -74.0118010640799]}, "246656712525760": {"name": "TrinityIndoorrearNorth", "location": [40.7080158825815, -74.0119036919714]}, "208582": {"name": "ParishCenter2", "location": [40.7079325116284, -74.0130098463305]}, "286284": {"name": "FultonandFrontStreets", "location": [40.7068978593341, -74.0034882724831]}, "149624924913952": {"name": "LPBroadwaySLiberty", "location": [40.7088764416627, -74.010618980974]}, "6005200": {"name": "StPaulsroof01", "location": [40.7111596823942, -74.0090532728937]}, "15929760": {"name": "PierAKiosk", "location": [40.7043698, -74.018091]}, "285396": {"name": "32OldSlip_FrontStreetSide", "location": [40.7040977330852, -74.0077506937087]}, "293078": {"name": "125MaidenLane", "location": [40.7062419928622, -74.0061085217167]}, "292952": {"name": "Poleacrossfrom11Broadway", "location": [40.7050224400779, -74.0138997207396]}, "149624924910176": {"name": "4NYPreplacement6/22/16", "location": [40.703066499116, -74.0104964375496]}, "293088": {"name": "32OldSlip_SouthStreetSide", "location": [40.7036091766566, -74.0075137317399]}, "278248": {"name": "LightUpFrontStreet", "location": [40.7070218883328, -74.0036058425903]}, "205692": {"name": "StoneStreet(West)", "location": [40.70443688648, -74.0100703238568]}, "289390": {"name": "55waterwest", "location": [40.7026906995848, -74.0093779563904]}, "149624924913904": {"name": "BlueSpoon", "location": [40.7080704, -74.0074723]}, "293224": {"name": "11Broadway(inFlatironSchool)", "location": [40.7050844563524, -74.0141049097292]}, "211954": {"name": "WhitehallandWaterStreetPlaza", "location": [40.702457130202, -74.0125799776433]}, "293108": {"name": "BurgerBurger(PearlSt.Side)", "location": [40.7040252695847, -74.0106010435375]}, "289656": {"name": "ElevatedAcreGateway", "location": [40.7034153968181, -74.0091817975917]}, "290556": {"name": "FultonandWaterStreet", "location": [40.7071775511787, -74.0036554634571]}, "246656709798000": {"name": "StPaulsindoor01", "location": [40.7113831679251, -74.0091296320315]}, "293118": {"name": "BurgerBurger(StoneStreetSide)", "location": [40.7055582975439, -74.0107438713312]}}
+{
+    "149624923327148": {
+        "location": [
+            40.7081643082084,
+            -74.0122899300695
+        ],
+        "name": "TrinityindoorAltarSouth"
+    },
+    "149624923327208": {
+        "location": [
+            40.7080646800844,
+            -74.0120860821844
+        ],
+        "name": "TrinityindoorAltarNorth"
+    },
+    "149624924909984": {
+        "location": [
+            40.7116808059659,
+            -74.0084230899811
+        ],
+        "name": "LPBroadwayandVesey"
+    },
+    "149624924910176": {
+        "location": [
+            40.703066499116,
+            -74.0104964375496
+        ],
+        "name": "4NYPreplacement6/22/16"
+    },
+    "149624924911168": {
+        "location": [
+            40.7070877,
+            -74.003546
+        ],
+        "name": "Replacesmr58@19fulton"
+    },
+    "149624924913072": {
+        "location": [
+            40.7106052777891,
+            -74.0092545747757
+        ],
+        "name": "LPBroadwaySFulton"
+    },
+    "149624924913904": {
+        "location": [
+            40.7080704,
+            -74.0074723
+        ],
+        "name": "BlueSpoon"
+    },
+    "149624924913952": {
+        "location": [
+            40.7088764416627,
+            -74.010618980974
+        ],
+        "name": "LPBroadwaySLiberty"
+    },
+    "149624924915616": {
+        "location": [
+            37.4180951010362,
+            -122.098531723022
+        ],
+        "name": "135JohnStreetreplacement"
+    },
+    "15929760": {
+        "location": [
+            40.7043698,
+            -74.018091
+        ],
+        "name": "PierAKiosk"
+    },
+    "205692": {
+        "location": [
+            40.70443688648,
+            -74.0100703238568
+        ],
+        "name": "StoneStreet(West)"
+    },
+    "207546": {
+        "location": [
+            40.7043867986026,
+            -74.010123074022
+        ],
+        "name": "StoneStreet(East)"
+    },
+    "208150": {
+        "location": [
+            40.7078715146231,
+            -74.0131385923632
+        ],
+        "name": "ParishCenter1"
+    },
+    "208582": {
+        "location": [
+            40.7079325116284,
+            -74.0130098463305
+        ],
+        "name": "ParishCenter2"
+    },
+    "211954": {
+        "location": [
+            40.702457130202,
+            -74.0125799776433
+        ],
+        "name": "WhitehallandWaterStreetPlaza"
+    },
+    "246656709798000": {
+        "location": [
+            40.7113831679251,
+            -74.0091296320315
+        ],
+        "name": "StPaulsindoor01"
+    },
+    "246656709808192": {
+        "location": [
+            40.7112677878556,
+            -74.0092872118112
+        ],
+        "name": "StPaulsindoor02"
+    },
+    "246656712525760": {
+        "location": [
+            40.7080158825815,
+            -74.0119036919714
+        ],
+        "name": "TrinityIndoorrearNorth"
+    },
+    "246656712527232": {
+        "location": [
+            40.7079142210024,
+            -74.0119895226599
+        ],
+        "name": "TrinityIndoorrearSouth"
+    },
+    "263306": {
+        "location": [
+            40.7065842614777,
+            -74.0044717490127
+        ],
+        "name": "199Water(replacement)"
+    },
+    "278248": {
+        "location": [
+            40.7070218883328,
+            -74.0036058425903
+        ],
+        "name": "LightUpFrontStreet"
+    },
+    "283328": {
+        "location": [
+            40.7033042594045,
+            -74.0063814729911
+        ],
+        "name": "Pier11"
+    },
+    "285396": {
+        "location": [
+            40.7040977330852,
+            -74.0077506937087
+        ],
+        "name": "32OldSlip_FrontStreetSide"
+    },
+    "286284": {
+        "location": [
+            40.7068978593341,
+            -74.0034882724831
+        ],
+        "name": "FultonandFrontStreets"
+    },
+    "289390": {
+        "location": [
+            40.7026906995848,
+            -74.0093779563904
+        ],
+        "name": "55waterwest"
+    },
+    "289568": {
+        "location": [
+            40.7050765042656,
+            -74.0026280883467
+        ],
+        "name": "Pier15West"
+    },
+    "289624": {
+        "location": [
+            40.7031494313282,
+            -74.0083145495737
+        ],
+        "name": "ElevatedAcre"
+    },
+    "289656": {
+        "location": [
+            40.7034153968181,
+            -74.0091817975917
+        ],
+        "name": "ElevatedAcreGateway"
+    },
+    "289702": {
+        "location": [
+            40.7046909855223,
+            -74.0023115876829
+        ],
+        "name": "Pier15East"
+    },
+    "289774": {
+        "location": [
+            40.7013985338105,
+            -74.0090346336365
+        ],
+        "name": "HeliPort"
+    },
+    "290340": {
+        "location": [
+            40.7029254882542,
+            -74.0095807316538
+        ],
+        "name": "55waterEast"
+    },
+    "290556": {
+        "location": [
+            40.7071775511787,
+            -74.0036554634571
+        ],
+        "name": "FultonandWaterStreet"
+    },
+    "292618": {
+        "location": [
+            40.707662064093,
+            -74.0089237512075
+        ],
+        "name": "EastGateway"
+    },
+    "292952": {
+        "location": [
+            40.7050224400779,
+            -74.0138997207396
+        ],
+        "name": "Poleacrossfrom11Broadway"
+    },
+    "293078": {
+        "location": [
+            40.7062419928622,
+            -74.0061085217167
+        ],
+        "name": "125MaidenLane"
+    },
+    "293088": {
+        "location": [
+            40.7036091766566,
+            -74.0075137317399
+        ],
+        "name": "32OldSlip_SouthStreetSide"
+    },
+    "293108": {
+        "location": [
+            40.7040252695847,
+            -74.0106010435375
+        ],
+        "name": "BurgerBurger(PearlSt.Side)"
+    },
+    "293118": {
+        "location": [
+            40.7055582975439,
+            -74.0107438713312
+        ],
+        "name": "BurgerBurger(StoneStreetSide)"
+    },
+    "293148": {
+        "location": [
+            40.7079711362727,
+            -74.0094092578875
+        ],
+        "name": "WestGateway"
+    },
+    "293224": {
+        "location": [
+            40.7050844563524,
+            -74.0141049097292
+        ],
+        "name": "11Broadway(inFlatironSchool)"
+    },
+    "293256": {
+        "location": [
+            40.7113543546941,
+            -74.0094307938125
+        ],
+        "name": "StPaulsroof02"
+    },
+    "293812": {
+        "location": [
+            40.706621809303,
+            -74.0124751925578
+        ],
+        "name": "52Broadwaynorth(UFT)"
+    },
+    "308622": {
+        "location": [
+            40.7065201455958,
+            -74.0125610232462
+        ],
+        "name": "52Broadwaysouth(UFT)"
+    },
+    "5276028": {
+        "location": [
+            40.7030957501859,
+            -74.0098875761032
+        ],
+        "name": "VietnamPlazaWest"
+    },
+    "6005200": {
+        "location": [
+            40.7111596823942,
+            -74.0090532728937
+        ],
+        "name": "StPaulsroof01"
+    },
+    "6005680": {
+        "location": [
+            40.7082662999098,
+            -74.0112765134472
+        ],
+        "name": "LPBroadwayNofTrinity"
+    },
+    "6006960": {
+        "location": [
+            40.7063152588123,
+            -74.0060800461652
+        ],
+        "name": "125MaidenlaneSouth"
+    },
+    "6008368": {
+        "location": [
+            40.707870498068,
+            -74.0117849708258
+        ],
+        "name": "Trinitysteeple02"
+    },
+    "6009568": {
+        "location": [
+            40.7079518273971,
+            -74.0118010640799
+        ],
+        "name": "Trinitysteeple01"
+    },
+    "6014352": {
+        "location": [
+            40.7112989519304,
+            -74.0089312323835
+        ],
+        "name": "StPaulsroof03"
+    }
+}

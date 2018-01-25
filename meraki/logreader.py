@@ -11,20 +11,20 @@ re_digits= re.compile(r'(\d+)')
 
 def embedded_numbers(s):
     pieces=re_digits.split(s)
-    pieces[1::2]=map(int,pieces[1::2])
+    pieces[1::2]=list(map(int,pieces[1::2]))
     return pieces
 
 def cmp_strings_with_embedded_numbers(a,b):
     ap=embedded_numbers(a)
     bp=embedded_numbers(b)
-    tup=zip(ap,bp)
+    tup=list(zip(ap,bp))
     for x,y in tup:
         if cmp(x,y): return cmp(x,y)
     return cmp(len(ap),len(bp))
 
 os.environ['TZ']='US/Eastern'
 time.tzset()
-print "Processing event times in the %s time zone" % (",".join(time.tzname))
+print("Processing event times in the %s time zone" % (",".join(time.tzname)))
 
 DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
@@ -35,13 +35,14 @@ def time2DayAndHour(eventTime):
     return day,hour
 
 def day2String(day):
-    return time.strftime("%a %b %d %Y", time.localtime(day*24*3600))
+    return evtime2String(day*24*3600)
+    
+def evtime2String(evtime):   
+    return time.strftime("%a %b %d %Y", time.localtime(evtime))
  
 with open('data/AccessPoints.json') as APfile:    
     APInformation = json.load(APfile)
     APfile.close()
-
-
     
 class NetworkGraphEdge(object):
     def __init__(self,parent,child):
@@ -95,31 +96,30 @@ def PrintAPNClientCountDistribution():
     """
     apnsBySize={}
     
-    print "\nAP subnetworks are sets of APs visited by the same clients."
-    print "The count of AP networks of a given size is followed by a list of [i,j] values, where i is the count of subnetworks with j clients "
+    print("\nAP subnetworks are sets of APs visited by the same clients.")
+    print("""
+    The count of AP networks of a given size is followed by a list of [i,j] values, 
+    where i is the count of subnetworks with j clients """)
+           
     """
-    
     The potential networks are combinations of k to n APs taken from the population of n APs.
     So for example, there are n potential networks of size 1, and only one potential network of size n.
     We list only networks that have at least 1 client.  
-       
     """
     
-    for size, apn in sorted([(n.size, n) for n in APNetworkDict.values()]):
-        apnsBySize.setdefault(size,[]).append(apn)
+    for apn in sorted(APNetworkDict.values(), key=lambda x: x.size):
+        apnsBySize.setdefault(apn.size,[]).append(apn)
         
     for size in apnsBySize:
         clientCounts = [len(apn.clients) for apn in apnsBySize[size]]
         counts = Counter(clientCounts)
         distribution = Counter(counts)
 
-        print ("%5d networks with %d APs and %d clients" % (len(apnsBySize[size]),size, sum(clientCounts))),
+        print(("%5d networks with %d APs and %d clients" % (len(apnsBySize[size]),size, sum(clientCounts))), end=' ')
         
-        for instances,clientCount in sorted(((instance, count) for count,instance in distribution.items()), reverse=True):
-            print ("[%d:%d]" % (instances,clientCount)), 
-        print
-
-
+        for instances,clientCount in sorted(((instance, count) for count,instance in list(distribution.items())), reverse=True):
+            print(("[%d:%d]" % (instances,clientCount)), end=' ') 
+        print()
 
 
 def APNHierarchy():
@@ -134,7 +134,7 @@ def APNHierarchy():
     The edges list the APs that were eliminated
 
     '''
-    candidates=sorted(([(len(apn.uid), apn) for apn in APNetworkDict.values()]) ,reverse=True)
+    candidates=sorted(([(len(apn.uid), apn) for apn in list(APNetworkDict.values())]) ,reverse=True)
     rootuid = tuple(range(len(apList)))
     root=_APNetwork(rootuid,None)        
 
@@ -157,7 +157,7 @@ def APNHierarchy():
    
 def ListAPNHierarchy(node, offset=0):   
     
-    print ''' 
+    print(''' 
 Relationships between groupings of APs based on the number of client devices that associated with them,
 The hierarchy shows the relationship between these groupings or "AP Networks". 
 
@@ -167,32 +167,130 @@ x is the number of APs in the grouping
 y is the number of clients that connected with all nodes in this grouping 
 z is the number of clients that connected to this grouping, including connections to clients that connected to
   any subset.  i.e. the number of clients that connected to any of the nodes in the grouping 
-    '''
+    ''')
     
-    print "%s %d (%d) [%d]" % (" "*offset, len(node.uid), len(node.clients),node.totalClients())
+    print("%s %d (%d) [%d]" % (" "*offset, len(node.uid), len(node.clients),node.totalClients()))
 
     for __,__,child in sorted(((-child.totalClients(), len(edge.difference), child)  for child,edge in node.children)):
         if len(child.children):
             ListAPNHierarchy(child, offset+3)
+            
+edgeDict = {}
+clientGraph= {}       
+
+def subsetClientGraph(clients, start, end):
+    G= {}
+    
+    for edge in list(edgeDict.values()):
+        if edge.InTimeWindow(clients,start,end):
+            ap1,ap2 = edge.EdgeId
+            G.setdefault(ap1,[]).append((ap2,edge))
+            G.setdefault(ap2,[]).append((ap1,edge))
+    
+    return G  
+
+
+def printMovementGraph():
+    print('''
+    The graph shows movement of clients between APs.  Graph format it x:  [y: count, ...]
+    where count is the number of movements of clients between APs x and y
+    ''')
+    
+    for n1 in sorted(clientGraph, key=lambda x: x.ap_id):
+        print("{:>12}:".format(n1.ap_id), end=' ')
+        print(("[%s]") % (", ".join([", ".join("{:>12}: {:<5d}".format(n2.ap_id,e.totalCount()) 
+                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].ap_id )) ])))
+ 
+def printClientGraph():
+    print('''
+    The graph shows movement of clients between APs.  Graph format it x:  [y: count, ...]
+    where count is the number of clients that moved between APs x and y
+    ''')
+    
+    for n1 in sorted(clientGraph, key=lambda x: x.ap_id):
+        print("{:>12}:".format(n1.ap_id), end=' ')
+        print(("[%s]") % (", ".join([", ".join("{:>12}: {:<5d}".format(n2.ap_id,e.totalClients()) 
+                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].ap_id )) ]))) 
+ 
+           
+def edge(ap1,ap2,client,eventTime):
+    edgeId = tuple(sorted([ap1, ap2],key=operator.attrgetter('ap_id')))
+    
+    if edgeId in edgeDict:
+        edge = edgeDict[edgeId]
+    else:
+        edge = _edge(edgeId)
+   
+    edge.event(client, eventTime)
+
+
+class _edge(object):
+    
+    def __init__(self, EdgeId):
+        # Show movement from one WAP to WAP 
+        self.edgeId=EdgeId
+        edgeDict[EdgeId] = self
+        ap1,ap2=EdgeId
+        ap1.edges.append((ap2,self))
+        ap2.edges.append((ap1,self))
+        self.count={}
+        clientGraph.setdefault(ap1,[]).append((ap2, self))
+        clientGraph.setdefault(ap2,[]).append((ap1, self))
+        
+    def event(self, client, eventTime):
+        self.count.setdefault(client,[]).append(eventTime)
+        
+    def inTimeWindow(self, clients=[], start=0, end=None):
+        if not end:
+            end = time.time()
+            
+        if not clients:
+            clients = list(self.count.keys())
+        
+        for client in clients: 
+            if (min(itertools.chain(*list(e.count[client].values()))) < end 
+                        or max(itertools.chain(*list(e.count[client].values()))) > start):
+                return True
+        return False
+    
+    def subsetCount(self, clients=[], start=0,end=None):
+        if not end:
+            end = time.time()
+        if not clients:
+            clients = list(self.count.keys())
+        
+        return sum((self.count[client] for client in clients 
+                    if (min(itertools.chain(*list(e.count[client].values()))) < end 
+                        or max(itertools.chain(*list(e.count[client].values()))) > start)                    
+                   ))
+ 
+    def totalClients(self):
+        return len(self.count)
+    
+    def totalCount(self):
+        return sum([len(self.count[client]) for client in self.count])
     
 class ap(object):
     def __init__(self,event):
         self.ap_id = event["ap_id"]
 
         if not str(self.ap_id) in APInformation:
-            print "Key Error - AP ID %s missing from APInformation json file" % (str(self.ap_id))
+            print("Key Error - AP ID %s missing from APInformation json file" % (str(self.ap_id)))
             self.name="Unknown"
             self.location= [0,0] 
         else:
             self.name = APInformation[str(self.ap_id)]['name']
             self.location = tuple(APInformation[str(self.ap_id)]['location'])
         self.clients = {}
-        
+        self.edges=[]
         # Number the APs sequentially from 0 to n-1
         # Use apList to lookup the AP using its index
         
         apList.append(self)
         self.index = len(apList) - 1
+        
+    def __str__(self):
+        return str(self.ap_id)
         
     def appendEvent(self, event, client):
         
@@ -204,18 +302,29 @@ class ap(object):
     def printClientCountByDay(self):
 
         for day in sorted(self.clients.keys()):
-            print ("%12s: %6d") % (day2String(day), len(self.clients[day]))
+            print(("%12s: %6d") % (day2String(day), len(self.clients[day])))
         
         
     def printClientCountByWeekDay(self):
         weekdayTotals = [0]*7
         
-        for day in (self.clients.keys()):
+        for day in (list(self.clients.keys())):
             dayofweek = time.localtime(day*24*3600+40000).tm_wday
             weekdayTotals[dayofweek] += len(self.clients[day])
                                             
         for wDay in range (7):
-            print ("%4s: %6d") % (DoW[wDay], weekdayTotals[wDay])
+            print(("%4s: %6d") % (DoW[wDay], weekdayTotals[wDay]))
+    
+    def networkEdges(self, start=0, end= None):
+        if end == None:
+            end = time.time()
+        
+        return [(nap,e) for nap,e in self.edges 
+                for client in e.count 
+               if (min(itertools.chain(*list(e.count[client].values()))) < end 
+                   or max(itertools.chain(*list(e.count[client].values()))) > start)]
+       
+        
             
 '''
 The event log is scanned in reverse time order.  
@@ -320,12 +429,31 @@ class client(object):
         self.ExpectedAssociationTime = {}
         self.associatedDuration = {}
         
+        # Mobility
+        # A transition to a new AP is counted when the client
+        # disassociates from one AP and Associates with another 
+        # within some time interval, say 24 hours.
+        
+        self.activeAssociations = set()
+        self.mostRecentAssociation = None
+        
+        
+    def logEvent(self, eventtime, assocTime, duration, mac, ap):
+        date=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(assocTime))
+        print("{:>20},{:>17.3f},{:>16},{:>10.2f},{:>15.2f},{:>22}".format(mac, assocTime, ap, duration, eventtime, date), file=eventfp)
         
     def appendEvent(self, event, ap):
         
         def ProcessAnyAPAssociation():
             if (self.AnyAPExpectedAssociationTime 
-                and eventTime - self.AnyAPExpectedAssociationTime) < 0.2:
+                and (eventTime - self.AnyAPExpectedAssociationTime) < 0.5):
+                
+                self.logEvent(eventTime, 
+                              self.AnyAPExpectedAssociationTime,   
+                              self.AllAPAssociatedDuration, 
+                              self.mac, 
+                              "0")
+
                 self.clientConnectTime += self.AllAPAssociatedDuration
                 self.AnyAPExpectedAssociationTime=0
                 self.AllAPAssociatedDuration=0
@@ -336,8 +464,16 @@ class client(object):
                 lap = ap
                 et = self.ExpectedAssociationTime.pop(lap)
                 duration = self.associatedDuration.pop(lap,0)
-    
+
+                self.logEvent(eventTime, 
+                              et, 
+                              duration, 
+                              self.mac, 
+                              ap.ap_id)    
+
                 self.duration.setdefault(day,{})
+                
+                
                 if not lap in self.duration[day]:
                     self.duration[day][lap]=duration
                 else:
@@ -347,6 +483,13 @@ class client(object):
                     self.totalConnectTime[lap] = duration
                 else: 
                     self.totalConnectTime[lap] += duration
+                    
+                # Scanning is back in time, so paradoxically we remove the ap
+                # from the active associations list when we process an 
+                # association event
+                
+                self.activeAssociations.discard(lap)
+                    
             
         eventTime = event["time_f"]
         day, hour = time2DayAndHour(eventTime)
@@ -365,13 +508,24 @@ class client(object):
        
         elif (event["el_type"] == "disassociation"): 
             duration = float(event["details"]["duration"])  
+
+      
+            # Create an edge to all aps in the Active association list
+            for nap in self.activeAssociations:
+                edge(ap,nap, self, eventTime)
+            else: # or an edge to the most recent ap visited if it was visited within 12 hours ago
+                if self.mostRecentAssociation:
+                    nap, t = self.mostRecentAssociation
+                    if (ap != nap) and (t - eventTime < 12*3600):
+                        edge(ap,nap, self, eventTime)
+                
             
-            if duration < 12*3600:
+            if duration < 24*3600:
                 
                 # Events in the log file are read in reverse time order.  Thus
                 # the disassociation event is read before the matching association event.
                 #  
-                
+            
                 expectedAssTime = eventTime - duration
         
                 # Two types of running total:
@@ -413,7 +567,7 @@ class client(object):
                     else:
                         fixap = self.ExpectedAssociationTime[ap] - expectedAssTime
                         if fixap > 1000000:
-                            print "Large Fixap value %d on mac %s at time %f" %(fixap, self.mac, eventTime)
+                            print("Large Fixap value %d on mac %s at time %f" %(fixap, self.mac, eventTime))
                         if fixap > 0:
                             self.ExpectedAssociationTime[ap] = expectedAssTime
                             self.associatedDuration[ap] += fixap 
@@ -425,9 +579,11 @@ class client(object):
                 self.days.update(set(range(startday, day + 1)))
                 self.hours.update(set(range(starthour, hour + 1)))                
 
+        self.mostRecentAssociation=(ap,eventTime)
+
     def ClientRange(self):
         # The count of APs connected to by this client for each calendar day
-        return [(day, len(self.duration[day])) for day in self.duration.keys()]
+        return [(day, len(self.duration[day])) for day in list(self.duration.keys())]
 
 
     def ClientDuration(self): 
@@ -454,20 +610,24 @@ class eventFile(object):
 
     def __init__(self): 
                  
-        filenames=['allEvents4.json', 
-                   'allEvents3.json', 
-                   'allEvents2.json', 
+        filenames=['allEvents0.json', 
                    'allEvents1.json', 
-                   'allEvents0.json']
+                   'allEvents2.json', 
+                   'allEvents3.json', 
+                   'allEvents4.json']
    
         self.ClientDict = {}
         self.APDict = {}
         
         self.eventsProcessed = 0
+    
+        global eventfp 
+        
+        eventfp = open('allEvents.csv','w')  
    
         for jsonfilename in filenames:
             filename = 'data/'+jsonfilename
-            print "Getting event data from file %s " % (filename)
+            print("Getting event data from file %s " % (filename))
 
             with open(filename) as json_data:
                 d = json.load(json_data)
@@ -475,6 +635,11 @@ class eventFile(object):
  
             self.LoadEvents(d) 
             
+        eventfp.close()
+        
+        
+        printMovementGraph()
+        printClientGraph()
         self.clientDailyConnectionTimes()
         self.clientConnectionTimes()
         self.clientConnectDurations()
@@ -482,74 +647,62 @@ class eventFile(object):
         self.printAccessPointUsage()
         self.printRangeByDay()
         
-        for client in self.ClientDict.values():
+        for client in list(self.ClientDict.values()):
             client.APNetwork()
 
         PrintAPNClientCountDistribution()
-        APNHierarchy()
+        
+        #  This is pathologically slow:  
+        #  APNHierarchy()
                         
        
     def LoadEvents(self,d):
-        
-        with open("events.csv","w") as csvFile:
-        
-            for event in d:
-                eventTime = event["time_f"]
-                date = time.strftime("%Y-%m-%d", time.localtime(eventTime))
-                
-                apID = event["ap_id"]
-                # Add AP to a dictionary if we haven't seen it before
-                if not apID in self.APDict:
-                    a = self.APDict[apID] = ap(event)
-                else:
-                    a = self.APDict[apID]
+        for event in d:
+            eventTime = event["time_f"]
+            date = time.strftime("%Y-%m-%d", time.localtime(eventTime))
+            
+            apID = event["ap_id"]
+            # Add AP to a dictionary if we haven't seen it before
+            if not apID in self.APDict:
+                a = self.APDict[apID] = ap(event)
+            else:
+                a = self.APDict[apID]
 
-                clientMac = event["cli_mac"]
-                # Add MAC address to the dictionary if we haven't seen it before
-                if not clientMac in self.ClientDict:
-                    c = self.ClientDict[clientMac] = client(event)
-                else:    
-                    c = self.ClientDict[clientMac]
+            clientMac = event["cli_mac"]
+            # Add MAC address to the dictionary if we haven't seen it before
+            if not clientMac in self.ClientDict:
+                c = self.ClientDict[clientMac] = client(event)
+            else:    
+                c = self.ClientDict[clientMac]
+            
+            c.appendEvent(event, a)
+            a.appendEvent(event, c)
 
-                if (event["el_type"] == "disassociation"): 
-                    etype = "D"
-                    duration = float(event["details"]["duration"]) 
-                else:
-                    etype = "A"
-                    duration = 0
-                
-                print >> csvFile, "%20s, %s, %16s, %s, %s, %f" % (clientMac, date, eventTime, apID, etype, duration)
-                
-                c.appendEvent(event, a)
-                a.appendEvent(event, c)
-          
-                self.eventsProcessed+=1
-                
-            csvFile.close()
+            self.eventsProcessed+=1
             
             
-        print ("%d events loaded" % (self.eventsProcessed))
+        print(("%d events loaded" % (self.eventsProcessed)))
 
     def printAccessPointUsage(self):   
 
-        print ("\n\nCount of clients connected to each of the %d Access Points" % (len(self.APDict)))
+        print(("\n\nCount of clients connected to each of the %d Access Points" % (len(self.APDict))))
         
         for apID in sorted(self.APDict.keys()):
             a = self.APDict[apID]
-            print "AP %d: (%s)" % (apID, a.name) 
+            print("AP %d: (%s)" % (apID, a.name)) 
             a.printClientCountByDay()
   
         print("\n Access by Day of Week")  
   
         for apID in sorted(self.APDict.keys()):
             a = self.APDict[apID]
-            print "AP %d: (%s)" % (apID, a.name) 
+            print("AP %d: (%s)" % (apID, a.name)) 
             a.printClientCountByWeekDay()  
             
         
     def printRangeByDay(self):    
         rangeCounts= {}
-        for c in self.ClientDict.values():
+        for c in list(self.ClientDict.values()):
             for day, count in c.ClientRange():
                 if not day in rangeCounts:
                     rangeCounts[day] = {}
@@ -567,92 +720,94 @@ class eventFile(object):
         
         columns = 20
         
-        print Commentary        
-        print "%16s" % ("Range "),        
+        print(Commentary)        
+        print("%16s" % ("Range "), end=' ')        
         for count in range(1,columns): 
-            print "%5d" % (count),
-        print    
+            print("%5d" % (count), end=' ')
+        print()    
         
         for day in sorted(rangeCounts.keys()):      
-            print "%16s" % (day2String(day)),        
+            print("%16s" % (day2String(day)), end=' ')        
             for count in range(1,columns): 
-                print "%5d" % (rangeCounts[day].get(count,0)),
+                print("%5d" % (rangeCounts[day].get(count,0)), end=' ')
               
             for count in sorted(set(rangeCounts[day]) - set(range(columns))):    
-                print "(%d,%d)" % (count, rangeCounts[day][count]),
-            print    
+                print("(%d,%d)" % (count, rangeCounts[day][count]), end=' ')
+            print()    
 
     def printClientWhenSeenCounts(self):
         
-        seenDays = Counter([c.ClientDays() for c in self.ClientDict.values()])
-        seenHours =  Counter([c.ClientHours() for c in self.ClientDict.values()])
+        seenDays = Counter([c.ClientDays() for c in list(self.ClientDict.values())])
+        seenHours =  Counter([c.ClientHours() for c in list(self.ClientDict.values())])
             
         print ("\n\nCount of calendar days during which clients were observed")    
             
         j=0
         for i in sorted(seenDays):
-            print "%4d: %4d,"  % (i, seenDays[i]),
+            print("%4d: %4d,"  % (i, seenDays[i]), end=' ')
             j+=1
             if j>=10:
                 j=0
-                print
+                print()
                                   
         j=0        
         print ("\n\nCount of hour buckets during which clients were observed")    
         for i in sorted(seenHours):
-            print "%4d: %4d,"  % (i, seenHours[i]),
+            print("%4d: %4d,"  % (i, seenHours[i]), end=' ')
             j+=1
             if j>=10: 
-                print
+                print()
                 j=0
                                     
        
     def clientConnectDurations(self):
        
-        print "\n\n\nClient Connect time distribution in hour buckets, for 1000 most active clients(AP)",
+        print("\n\n\nClient Connect time distribution in hour buckets, for 1000 most active clients(AP)", end=' ')
        
         durations = sorted([(int(c.ClientDuration()/3600),int(c.ClientAPDuration()/3600)) 
-                            for c in self.ClientDict.values()], reverse=True)
+                            for c in list(self.ClientDict.values())], reverse=True)
         
         maxduration, maxmac = max([(int(c.ClientDuration()/3600),c.mac) 
-                                   for c in self.ClientDict.values()])
-        
+                                   for c in list(self.ClientDict.values())])
+            
         c = 0
         
-        while (c < 1000):   #  Print 1000 entries. For all, change to len(durations)):
+        while (c < 500):   #  Print 1000 entries. For all, change to len(durations)):
             if (c % 10 == 0):  
-                print
-            print "%4d(%4d)," % (durations[c]),
+                print()
+            print("%4d(%4d)," % (durations[c]), end=' ')
                         
             c+=1
            
-        print "\nMax Duration %d on mac %s" % (maxduration, maxmac)
+        print("\nMax Duration %d on mac %s" % (maxduration, maxmac))
+            
+        
         
     def clientConnectionTimes(self):
         
         clientCounts = [[0 for x in range(24)] for y in range(7)]
         
-        for c in self.ClientDict.values():
+        for c in list(self.ClientDict.values()):
             for day in c.days:
                 w_day = time.localtime(day*24*3600).tm_wday
                 for hour in (set(range(day*24, (day+1)*24)) & c.hours):
                     hourInDay = hour % 24
                     clientCounts[w_day][hourInDay] += 1
                     
-        print "\n%6s" % (" "),
+        print("\n%6s" % (" "), end=' ')
         for hour in range(24):
-            print "%6d" % (hour),
+            print("%6d" % (hour), end=' ')
         
         for day in range(7):
-            print "\n%6s" % (DoW[day]),
+            print("\n%6s" % (DoW[day]), end=' ')
             for hour in range(24):
-                print "%6d" % (clientCounts[day][hour]),
+                print("%6d" % (clientCounts[day][hour]), end=' ')
         
-        print
+        print()
     
     def clientDailyConnectionTimes(self):
             
-        clientHours =  dict(Counter(itertools.chain(*(c.hours for c in self.ClientDict.values()))))
+        clientHours =  dict(Counter(itertools.chain(*(c.hours for c in list(self.ClientDict.values())))))
         
         start = min(clientHours) 
         start-=start%24
@@ -660,26 +815,32 @@ class eventFile(object):
         stop = max(clientHours)
         stop-=(stop)%24
 
-        print "\n%18s" % (" "),
+        print("\n%18s" % (" "), end=' ')
         for hour in range(24):
-            print "%4d" % (hour),
-   
+            print("%4d" % (hour), end=' ')
+
+        results = {}
+        clients = []
+        formatString = '{:<18}' + "{:>5}"*24
         
         for hour in range(start,stop+24):
-            if (hour%24) == 0:
-                print "\n%18s" % (day2String(hour//24)),
-                
-            print "%4d" % (clientHours.get(hour, 0)),
-       
-      
-        print
             
-     
+            clients.append(clientHours.get(hour, 0))
+            
+            if (hour%24) == 23:
+                date=day2String(hour//24)
+                results[int(hour//24)]=dict(date=date, clients=clients)
+                print(formatString.format(date, *clients))
+                clients=[]
+        
+        with open("clientdaily.json","w") as jsonFile:
+            json.dump(results, jsonFile,indent=3, sort_keys=True)        
+        
 def __test():
     
     log = eventFile()
     
-    print "End"
+    print("End")
     
                     
 if __name__ == '__main__':

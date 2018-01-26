@@ -51,10 +51,8 @@ class NetworkGraphEdge(object):
         self.difference=tuple(sorted(set(parent.uid) - set(child.uid)))
         # Additional edge attributes go here
 
-
 APNetworkDict= {}    #  Look up by UID, a tuple of sorted AP IDs in the network
-apList = []  # List of ap instances indexed by ap_id
-    
+
 def APNetwork(APList, client):
     uid = tuple(sorted([ap.index for ap in APList]))
     if uid in APNetworkDict:
@@ -85,7 +83,7 @@ class _APNetwork(object):
       
     def APs(self): 
         # Return a list of instances of class ap that represent APs in the network
-        return sorted([apList[i] for i in self.uid])
+        return sorted([wap.instances[i] for i in self.uid])
     
     def totalClients(self):
         return len(self.clients) + sum(child.totalClients() for child,edge in self.children)
@@ -135,7 +133,7 @@ def APNHierarchy():
 
     '''
     candidates=sorted(([(len(apn.uid), apn) for apn in list(APNetworkDict.values())]) ,reverse=True)
-    rootuid = tuple(range(len(apList)))
+    rootuid = tuple(range(len(wap.instances)))
     root=_APNetwork(rootuid,None)        
 
     # list of all Networks in reverse size order:
@@ -193,28 +191,42 @@ def subsetClientGraph(clients, start, end):
 def printMovementGraph():
     print('''
     The graph shows movement of clients between APs.  Graph format it x:  [y: count, ...]
-    where count is the number of movements of clients between APs x and y
+    where count is the number of movements of clients between APs x and y. 
+    
+    In this case the count is incremented each time the observed client changes Access Point,
+    so this is indicator of traffic between locations
     ''')
     
-    for n1 in sorted(clientGraph, key=lambda x: x.ap_id):
-        print("{:>12}:".format(n1.ap_id), end=' ')
-        print(("[%s]") % (", ".join([", ".join("{:>12}: {:<5d}".format(n2.ap_id,e.totalCount()) 
-                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].ap_id )) ])))
+    for n1 in sorted(clientGraph, key=lambda x: x.index):
+        print("{:>2}:".format(n1.index), end=' ')
+        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.totalCount()) 
+                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].index )) ])))
  
 def printClientGraph():
     print('''
     The graph shows movement of clients between APs.  Graph format it x:  [y: count, ...]
     where count is the number of clients that moved between APs x and y
+
+    In this case the count is incremented the first time the client mac changes Access Point. 
+    so this is indicator of how many unique visitors moved between locations over the full
+    period of analysis.
+    
     ''')
     
-    for n1 in sorted(clientGraph, key=lambda x: x.ap_id):
-        print("{:>12}:".format(n1.ap_id), end=' ')
-        print(("[%s]") % (", ".join([", ".join("{:>12}: {:<5d}".format(n2.ap_id,e.totalClients()) 
-                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].ap_id )) ]))) 
+    for n1 in sorted(clientGraph, key=lambda x: x.index):
+        print("{:>2}:".format(n1.index), end=' ')
+        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementClients()) 
+                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].index )) ]))) 
+ 
+def printUniqueClientRatioGraph(): 
+    for n1 in sorted(clientGraph, key=lambda x: x.index):
+        print("{:>2}:".format(n1.index), end=' ')
+        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.uniqueClientRatio()) 
+                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].index )) ]))) 
  
            
 def edge(ap1,ap2,client,eventTime):
-    edgeId = tuple(sorted([ap1, ap2],key=operator.attrgetter('ap_id')))
+    edgeId = tuple(sorted([ap1, ap2],key=operator.attrgetter('index')))
     
     if edgeId in edgeDict:
         edge = edgeDict[edgeId]
@@ -240,37 +252,39 @@ class _edge(object):
     def event(self, client, eventTime):
         self.count.setdefault(client,[]).append(eventTime)
         
-    def inTimeWindow(self, clients=[], start=0, end=None):
+    def movementCount(self, clients=[], start=0,end=None):
         if not end:
-            end = time.time()
-            
-        if not clients:
-            clients = list(self.count.keys())
-        
-        for client in clients: 
-            if (min(itertools.chain(*list(e.count[client].values()))) < end 
-                        or max(itertools.chain(*list(e.count[client].values()))) > start):
-                return True
-        return False
-    
-    def subsetCount(self, clients=[], start=0,end=None):
-        if not end:
+            if not clients and start==0:
+                return sum([len(self.count[client]) for client in self.count])
             end = time.time()
         if not clients:
             clients = list(self.count.keys())
         
         return sum((self.count[client] for client in clients 
-                    if (min(itertools.chain(*list(e.count[client].values()))) < end 
-                        or max(itertools.chain(*list(e.count[client].values()))) > start)                    
+                    if (min(itertools.chain(*list(self.count[client].values()))) < end 
+                        and max(itertools.chain(*list(self.count[client].values()))) > start)                    
                    ))
  
-    def totalClients(self):
-        return len(self.count)
+    def movementClients(self, start=0, end=None):
+        if not end:
+            if start == 0:
+                return len(self.count)
+            end = time.time()
+
+        return len([client for client in self.count 
+                   if ((start < max(self.count[client].values))
+                       and (end > min(self.count[client].values)))])
     
+    def uniqueClientRatio(self, start=0, end=None):
+        return self.movementCount(clients=[],start=start, end=end)/self.movementClients(start=start,end=end) 
+        
+        
     def totalCount(self):
         return sum([len(self.count[client]) for client in self.count])
     
-class ap(object):
+class wap(object):
+    instances =[]  # Keep track of instances
+    
     def __init__(self,event):
         self.ap_id = event["ap_id"]
 
@@ -284,10 +298,10 @@ class ap(object):
         self.clients = {}
         self.edges=[]
         # Number the APs sequentially from 0 to n-1
-        # Use apList to lookup the AP using its index
+        # Use wap.instances to lookup the AP using its index
         
-        apList.append(self)
-        self.index = len(apList) - 1
+        self.index = len(wap.instances) 
+        wap.instances.append(self)
         
     def __str__(self):
         return str(self.ap_id)
@@ -308,7 +322,7 @@ class ap(object):
     def printClientCountByWeekDay(self):
         weekdayTotals = [0]*7
         
-        for day in (list(self.clients.keys())):
+        for day in (list(self.clients)):
             dayofweek = time.localtime(day*24*3600+40000).tm_wday
             weekdayTotals[dayofweek] += len(self.clients[day])
                                             
@@ -322,7 +336,7 @@ class ap(object):
         return [(nap,e) for nap,e in self.edges 
                 for client in e.count 
                if (min(itertools.chain(*list(e.count[client].values()))) < end 
-                   or max(itertools.chain(*list(e.count[client].values()))) > start)]
+                   and max(itertools.chain(*list(e.count[client].values()))) > start)]
        
         
             
@@ -413,7 +427,7 @@ class client(object):
     def __init__(self, event):
         self.mac = event["cli_mac"]
         self.name = event["cli_name"]
-        self.events = {}
+        #self.events = {}
         self.duration ={}
         self.days = set()
         self.hours = set()
@@ -494,7 +508,7 @@ class client(object):
         eventTime = event["time_f"]
         day, hour = time2DayAndHour(eventTime)
        
-        self.events.setdefault(day,[]).append(event)
+        #self.events.setdefault(day,[]).append(event)
         self.days.add(day)
         self.hours.add(hour)
         self.aps.add(ap)
@@ -638,24 +652,7 @@ class eventFile(object):
         eventfp.close()
         
         
-        printMovementGraph()
-        printClientGraph()
-        self.clientDailyConnectionTimes()
-        self.clientConnectionTimes()
-        self.clientConnectDurations()
-        self.printClientWhenSeenCounts()
-        self.printAccessPointUsage()
-        self.printRangeByDay()
-        
-        for client in list(self.ClientDict.values()):
-            client.APNetwork()
-
-        PrintAPNClientCountDistribution()
-        
-        #  This is pathologically slow:  
-        #  APNHierarchy()
-                        
-       
+    
     def LoadEvents(self,d):
         for event in d:
             eventTime = event["time_f"]
@@ -664,7 +661,7 @@ class eventFile(object):
             apID = event["ap_id"]
             # Add AP to a dictionary if we haven't seen it before
             if not apID in self.APDict:
-                a = self.APDict[apID] = ap(event)
+                a = self.APDict[apID] = wap(event)
             else:
                 a = self.APDict[apID]
 
@@ -840,6 +837,29 @@ def __test():
     
     log = eventFile()
     
+    print("\n\nAccess Points")
+    for ap in wap.instances:
+        print("{:>4d}  {:>16d}   {:<30}".format(ap.index, ap.ap_id, ap.name))
+    
+    printMovementGraph()
+    printClientGraph()
+    printUniqueClientRatioGraph()
+    log.clientDailyConnectionTimes()
+    log.clientConnectionTimes()
+    log.clientConnectDurations()
+    log.printClientWhenSeenCounts()
+    log.printAccessPointUsage()
+    log.printRangeByDay()
+    
+    for client in list(log.ClientDict.values()):
+        client.APNetwork()
+
+    PrintAPNClientCountDistribution()
+    
+    #  This is pathologically slow:  
+ 
+    #  APNHierarchy()
+
     print("End")
     
                     

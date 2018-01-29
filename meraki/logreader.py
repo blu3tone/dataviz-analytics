@@ -32,8 +32,10 @@ print("Processing event times in the %s time zone" % (",".join(time.tzname)))
 DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
 def time2DayAndHour(eventTime):  
-    # Returns day,hour since 1 Jam 1970
-    hour = int(eventTime - time.timezone)//3600 
+    # Returns day,hour since 1 Jan 1970
+    # Times are UTC.  We want hour%24 to be the local clock time:
+    #tzoffset = int(eventTime//3600)%24 - time.localtime(eventTime).tm_hour
+    hour = int(eventTime - time.timezone)//3600 + time.localtime(eventTime).tm_isdst 
     day = hour//24
     return day,hour
 
@@ -428,7 +430,6 @@ class _client(object):
        
         elif (event["el_type"] == "disassociation"): 
             duration = float(event["details"]["duration"])  
-
       
             # Create an edge to all aps in the Active association list
             for nap in self.activeAssociations:
@@ -561,6 +562,7 @@ class eventLog(object):
         for event in d:
             eventTime = event["time_f"]
             date = time.strftime("%Y-%m-%d", time.localtime(eventTime))
+            
             a = wap(event)
             c = client(event)
           
@@ -568,7 +570,6 @@ class eventLog(object):
             a.appendEvent(event, c)
 
             self.eventsProcessed+=1
-            
             
         print(("%d events loaded" % (self.eventsProcessed)))
 
@@ -728,7 +729,7 @@ class eventLog(object):
             date = day2String(day)
             clients=[clientHours.get(hour,0) for hour in range(day*24,(day+1)*24)]
             
-            results[day]=dict(date=date, clients=clients)
+            results[day]=dict(date=day, clients=clients)
             print(formatString.format(date, *clients))
             
         with open("clientdaily.json","w") as jsonFile:

@@ -3,14 +3,16 @@ import json
 import string
 import operator
 import time
+from datetime import datetime
+from pytz import timezone,utc
 import itertools
 import os
 from collections import Counter
 import  re
 re_digits= re.compile(r'(\d+)')
-
-
 from APGroupGraph import APNetwork, PrintAPNClientCountDistribution
+
+MerakiGraph={}
 
 def embedded_numbers(s):
     pieces=re_digits.split(s)
@@ -25,17 +27,32 @@ def cmp_strings_with_embedded_numbers(a,b):
         if cmp(x,y): return cmp(x,y)
     return cmp(len(ap),len(bp))
 
-os.environ['TZ']='US/Eastern'
-time.tzset()
-print("Processing event times in the %s time zone" % (",".join(time.tzname)))
+
+#if hasattr(time, 'tzset'):
+    ## Windows does not support tzset).
+    #os.environ['TZ'] = os.environ['TZ']='US/Eastern'
+    #time.tzset()
+    #print("Processing event times in the %s time zone" % (",".join(time.tzname)))
+#else:
+    #print("Timing is UTC")
+
+tz=timezone('US/Eastern')
 
 DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
-def time2DayAndHour(eventTime):  
+
+def time2DayAndHour(evtime):  
     # Returns day,hour since 1 Jan 1970
-    # Times are UTC.  We want hour%24 to be the local clock time:
-    #tzoffset = int(eventTime//3600)%24 - time.localtime(eventTime).tm_hour
-    hour = int(eventTime - time.timezone)//3600 + time.localtime(eventTime).tm_isdst 
+    # Times are UTC.  We want hour%24 to be the local clock time:   
+   
+    # Use the datetime package.  Code the eventTime as a dt object with UTZ timezone
+    utc_dt=datetime.utcfromtimestamp(evtime).replace(tzinfo=utc)
+    # Display this time in the local timezone like this:
+    dt = utc_dt.astimezone(tz)
+    # Here is the difference in time with UTC
+    offs=dt.utcoffset()
+    
+    hour = int(evtime + offs.seconds)//3600 + offs.days*24 
     day = hour//24
     return day,hour
 
@@ -43,14 +60,22 @@ def day2String(day):
     return evtime2String(day*24*3600)
     
 def evtime2String(evtime):   
-    return time.strftime("%a %b %d %Y", time.localtime(evtime))
+    utc_dt=datetime.utcfromtimestamp(evtime).replace(tzinfo=utc)
+    # Display this time in the local timezone like this:
+    dt = utc_dt.astimezone(tz)
+    return dt.strftime("%a %m/%d/%y")
  
 with open('data/AccessPoints.json') as APfile:    
     APInformation = json.load(APfile)
     APfile.close()
             
+with open('data/prefixes.json') as PFXfile:
+    ethernetPrefixDict = json.load(PFXfile)
 
-clientGraph= {}       
+def manufacturer(mac):
+    return ethernetPrefixDict.get(mac[:8],"Unknown")
+    
+WAPGraph= {}       
 
 def subsetClientGraph(clients, start, end):
     G= {}
@@ -71,10 +96,10 @@ def printMovementGraph():
     so this is indicator of the people traffic between the locations
     ''')
     
-    for n1 in sorted(clientGraph, key=lambda x: x.index):
+    for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}:".format(n1.index), end=' ')
         print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.totalCount()) 
-                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].index )) ])))
+                                                for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ])))
  
 def printClientGraph():
     print('''
@@ -87,10 +112,10 @@ def printClientGraph():
     
     ''')
     
-    for n1 in sorted(clientGraph, key=lambda x: x.index):
+    for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}:".format(n1.index), end=' ')
         print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementClients()) 
-                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].index )) ]))) 
+                                                for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
  
 def printCountToClientRatioGraph(): 
     print('''
@@ -102,10 +127,10 @@ def printCountToClientRatioGraph():
        ''') 
     
     
-    for n1 in sorted(clientGraph, key=lambda x: x.index):
+    for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}:".format(n1.index), end=' ')
         print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.CountToClientRatio()) 
-                                                for n2,e in sorted(clientGraph[n1], key=lambda x : x[0].index )) ]))) 
+                                                for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
 
 edgeDict = {} 
            
@@ -131,8 +156,8 @@ class _edge(object):
         ap1.edges.append((ap2,self))
         ap2.edges.append((ap1,self))
         self.count={}
-        clientGraph.setdefault(ap1,[]).append((ap2, self))
-        clientGraph.setdefault(ap2,[]).append((ap1, self))
+        WAPGraph.setdefault(ap1,[]).append((ap2, self))
+        WAPGraph.setdefault(ap2,[]).append((ap1, self))
         
     def event(self, client, eventTime):
         self.count.setdefault(client,[]).append(eventTime)
@@ -194,7 +219,8 @@ class _wap(object):
         else:
             self.name = APInformation[str(self.ap_id)]['name']
             self.location = tuple(APInformation[str(self.ap_id)]['location'])
-        self.clients = {}
+        self.days = {}
+        self.hours = {}
         self.edges=[]
         # Number the APs sequentially from 0 to n-1
         # Use wap.instances to lookup the AP using its index
@@ -210,20 +236,40 @@ class _wap(object):
         eventTime = float(event["time_f"])
         day,hour = time2DayAndHour(eventTime)
 
-        self.clients.setdefault(day,set()).add(client)
+        self.days.setdefault(day,set()).add(client)
+       
+        if (event["el_type"] == "disassociation"): 
+            duration = float(event["details"]["duration"])
+            durationHours = max([int(float(duration)//3600),2])
+            for hr in range(hour,durationHours+1):
+                self.hours.setdefault(hr,set()).add(client)
+        else:    
+            self.hours.setdefault(hour,set()).add(client)
 
-    def printClientCountByDay(self):
+    def printClientCountByHour(self):
 
-        for day in sorted(self.clients.keys()):
-            print(("%12s: %6d") % (day2String(day), len(self.clients[day])))
+        print("\n{:>4d}: {}".format(self.index, self.name))
+        print("{:>18}: {:>6s} {}".format(self.ap_id, "Hour:",
+                            " ".join(("{:>3d}".format(int(hour%24)) for hour in range(24)))
+                                            ))
+
+        for day in sorted(self.days.keys()):
         
+            print("{:>18s}: {:>6d}".format(day2String(day), 
+                                            len(self.days.get(day,[]))), end= ' ')
+            
+            for hour in range(day*24, (day+1)*24):
+                print ("{:>3d}".format(len(self.hours.get(hour,[]))), end= ' ')
+            print()
+                  
+                      
         
     def printClientCountByWeekDay(self):
         weekdayTotals = [0]*7
         
-        for day in (list(self.clients)):
+        for day in (list(self.days)):
             dayofweek = time.localtime(day*24*3600+40000).tm_wday
-            weekdayTotals[dayofweek] += len(self.clients[day])
+            weekdayTotals[dayofweek] += len(self.days[day])
                                             
         for wDay in range (7):
             print(("%4s: %6d") % (DoW[wDay], weekdayTotals[wDay]))
@@ -335,6 +381,8 @@ class _client(object):
     def __init__(self, event):
         self.mac = event["cli_mac"]
         self.name = event["cli_name"]
+        if self.name == None:
+            self.name='unknown'
   
         self.duration ={}
         self.days = set()
@@ -367,7 +415,7 @@ class _client(object):
     def appendEvent(self, event, ap):
         
         def ProcessAnyAPAssociation():
-            if (self.AnyAPExpectedAssociationTime 
+            if (self.AnyAPExpectedAssociationTime > 0
                 and (eventTime - self.AnyAPExpectedAssociationTime) < 0.5):
                 
                 self.logEvent(eventTime, 
@@ -441,7 +489,8 @@ class _client(object):
                         edge(ap,nap, self, eventTime)
                 
             
-            if duration < 24*3600:
+            if True: #duration < 2*3600:
+                duration = min(duration,2*3600)
                 
                 # Events in the log file are read in reverse time order.  Thus
                 # the disassociation event is read before the matching association event.
@@ -454,21 +503,25 @@ class _client(object):
                 # 2 Disassociations and associations on a per AP basis
                 
                 
-                if not self.AnyAPExpectedAssociationTime:
+                if (self.AnyAPExpectedAssociationTime < 1 or 
+                    self.AllAPAssociatedDuration < 1) :
                     fix=0
                     self.AnyAPExpectedAssociationTime = expectedAssTime
                     self.AllAPAssociatedDuration = duration
                 else:
-                    if self.AnyAPExpectedAssociationTime - eventTime > 1:
-                        # Expected association didn't happen 
-                        # Process the event now
+                    if eventTime < self.AnyAPExpectedAssociationTime - 1:
+                        # Expected association should have happened a second ago 
+                        # Assume that event got lost, and process it now
                         
                         ProcessAnyAPAssociation()
                         fix=0
                         self.AnyAPExpectedAssociationTime = expectedAssTime
                         self.AllAPAssociatedDuration = duration                        
                     else:    
+                        # We have a new disassociation.  
+                        
                         fix = self.AnyAPExpectedAssociationTime - expectedAssTime
+                        assert fix < duration + 1, ("Fix {} can't be bigger than duration {}".format(fix, duration))
                         if fix > 0:
                             self.AnyAPExpectedAssociationTime = expectedAssTime
                             self.AllAPAssociatedDuration += fix
@@ -478,7 +531,7 @@ class _client(object):
                     self.ExpectedAssociationTime[ap] = expectedAssTime
                     self.associatedDuration[ap] = duration
                 else:
-                    if self.ExpectedAssociationTime[ap] - eventTime > 1:
+                    if eventTime < self.ExpectedAssociationTime[ap] - 1:
                         # The expected association should have already been processed
                         # So process it now, and simply queue the new disassociation
                         ProcessAPAssociation()
@@ -487,8 +540,12 @@ class _client(object):
                         self.associatedDuration[ap] = duration                        
                     else:
                         fixap = self.ExpectedAssociationTime[ap] - expectedAssTime
+                        
+                        assert fixap < duration + 1,  ("Fixap {} can't be bigger than duration {}".format(fixap, duration))
                         if fixap > 1000000:
                             print("Large Fixap value %d on mac %s at time %f" %(fixap, self.mac, eventTime))
+                            
+                            
                         if fixap > 0:
                             self.ExpectedAssociationTime[ap] = expectedAssTime
                             self.associatedDuration[ap] += fixap 
@@ -591,13 +648,24 @@ class eventLog(object):
         
     def printAccessPointUsageColumns(self):   
         print(("\n\nCount of clients connected to each of the %d Access Points" % (len(APDict))))
-        minday = min(min(ap.clients) for ap in _wap.instances)
-        maxday = max(max(ap.clients) for ap in _wap.instances)
+        minday = min(min(ap.days) for ap in _wap.instances)
+        maxday = max(max(ap.days) for ap in _wap.instances)
         
         print("{:>18}{}".format("Access Point:", ''.join(("{:>5d}".format(id)) for id in range(len(_wap.instances))))) 
         
         for day in range(minday,maxday+1):
-            print("{:>18}{}".format(day2String(day), ''.join(["{:>5d}".format(len(ap.clients.get(day,[]))) for ap in _wap.instances])))
+            print("{:>18}{}".format(day2String(day), ''.join(["{:>5d}".format(len(ap.days.get(day,[]))) for ap in _wap.instances])))
+   
+    def printAccessPointUsageByHour(self):
+        
+        print ("""
+
+        Access Point connections by hour
+        
+        """)
+        
+        for ap in _wap.instances:
+            ap.printClientCountByHour()
                   
         
     def printRangeByDay(self):    
@@ -658,6 +726,56 @@ class eventLog(object):
             if j>=10: 
                 print()
                 j=0
+                
+                
+        print("\n\nHigh Usage Clients")
+        j=0
+        
+        for c in sorted(ClientDict.values(), key=lambda c: c.ClientDays(), reverse=True):
+            print("{:>18s} {:>12.2f} {:>4d} {:>6d} {:<33s} {}".format(c.mac, 
+                                                                      c.clientConnectTime, 
+                                                                      c.ClientDays(), 
+                                                                      c.ClientHours(), 
+                                                                      c.name, 
+                                                                      manufacturer(c.mac)))
+            j+=1
+            
+            if j >=200:
+                break
+            
+                            
+        print("\n\nHigh Hours Per Day")
+        j=0
+        for c in sorted((c for c in ClientDict.values() if c.ClientHours()/c.ClientDays() > 18), key=lambda c: c.ClientDays(), reverse=True):
+            print("{:>18s} {:>6.2f}  {:>12.2f} {:>4d} {:>6d} {:<33s} {}".format(c.mac,
+                                                    c.ClientHours()/c.ClientDays(), 
+                                                    c.clientConnectTime, 
+                                                    c.ClientDays(), 
+                                                    c.ClientHours(), 
+                                                    c.name,
+                                                    manufacturer(c.mac)))
+            j+=1
+            
+            if j >=200:
+                break
+                
+        print("\n\nLow Hours Per Day")
+        j=0
+        for c in sorted((c for c in ClientDict.values() if c.ClientHours()/c.ClientDays() < 2), key=lambda c: c.ClientDays(), reverse=True):
+            print("{:>18s} {:>6.2f}  {:>12.2f} {:>4d} {:>6d} {:<33s} {}".format(c.mac, 
+                                                    c.ClientHours()/c.ClientDays(), 
+                                                    c.clientConnectTime, 
+                                                    c.ClientDays(), 
+                                                    c.ClientHours(), 
+                                                    c.name,
+                                                    manufacturer(c.mac)))
+            j+=1
+            
+            if j >=200:
+                break
+                
+                                
+        
                                     
        
     def clientConnectDurations(self):
@@ -734,10 +852,16 @@ class eventLog(object):
             
         with open("clientdaily.json","w") as jsonFile:
             json.dump(results, jsonFile,indent=3, sort_keys=True)        
+ 
+            
+def ReadMerakiLogs():
+    log = eventLog()
+
+    return log
         
 def __test():
-    
-    log = eventLog()
+    log=ReadMerakiLogs()
+ 
     
     print("\n\nAccess Points")
     for ap in _wap.instances:
@@ -747,6 +871,7 @@ def __test():
     printClientGraph()
     printCountToClientRatioGraph()
     log.printAccessPointUsageColumns()
+    log.printAccessPointUsageByHour()
     log.clientDailyConnectionTimes()
     log.clientConnectionTimes()
     log.clientConnectDurations()

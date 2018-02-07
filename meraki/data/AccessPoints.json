@@ -57,8 +57,8 @@
     },
     "149624924915616": {
         "location": [
-            37.4180951010362,
-            -122.098531723022
+            40.7071539,
+            -74.0049962
         ],
         "name": "135JohnStreetreplacement"
     },
@@ -237,6 +237,13 @@
         ],
         "name": "Poleacrossfrom11Broadway"
     },
+    "293028": {
+        "location": [
+            40.7071539,
+            -74.0049962
+        ],
+        "name": "Original@135JohnStreet"    
+    },
     "293078": {
         "location": [
             40.7062419928622,
@@ -299,6 +306,13 @@
             -74.0125610232462
         ],
         "name": "52Broadwaysouth(UFT)"
+    },
+    "310422": {
+        "location": [
+            40.7070877,
+            -74.003546
+        ],
+        "name": "Removed@19fulton"
     },
     "5276028": {
         "location": [

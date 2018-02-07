@@ -1,9 +1,11 @@
 
+from __future__ import print_function
+
 import json
 import string
 import operator
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pytz import timezone,utc
 import itertools
 import os
@@ -12,7 +14,6 @@ import  re
 re_digits= re.compile(r'(\d+)')
 from APGroupGraph import APNetwork, PrintAPNClientCountDistribution
 
-MerakiGraph={}
 
 def embedded_numbers(s):
     pieces=re_digits.split(s)
@@ -43,21 +44,29 @@ DoW =['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
 def time2DayAndHour(evtime):  
     # Returns day,hour since 1 Jan 1970
-    # Times are UTC.  We want hour%24 to be the local clock time:   
+    # evTime is POSIX UTC.  Returns day and hour referenced to local clock time:   
    
-    # Use the datetime package.  Code the eventTime as a dt object with UTZ timezone
+    # Use the datetime package.  Code the Meraki eventTime as a dt object with UTZ timezone
     utc_dt=datetime.utcfromtimestamp(evtime).replace(tzinfo=utc)
-    # Display this time in the local timezone like this:
+    # Convert to local timezone:
     dt = utc_dt.astimezone(tz)
     # Here is the difference in time with UTC
     offs=dt.utcoffset()
+    
+    # Shift the posix time by the offset and return as days and hours since
+    # 00:00 on Jan 1 1970 in the local timezone
     
     hour = int(evtime + offs.seconds)//3600 + offs.days*24 
     day = hour//24
     return day,hour
 
+def dayOfWeek(day):
+    return time.localtime(day*24*3600+40000).tm_wday
+
+
 def day2String(day):
-    return evtime2String(day*24*3600)
+    dt=datetime.utcfromtimestamp(day*24*3600).replace(tzinfo=tz).astimezone(utc) 
+    return dt.strftime("%a %m/%d/%y")
     
 def evtime2String(evtime):   
     utc_dt=datetime.utcfromtimestamp(evtime).replace(tzinfo=utc)
@@ -97,8 +106,8 @@ def printMovementGraph():
     ''')
     
     for n1 in sorted(WAPGraph, key=lambda x: x.index):
-        print("{:>2}:".format(n1.index), end=' ')
-        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.totalCount()) 
+        print("{:>2}: {}".format(n1.index,
+                                 ", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.totalCount()) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ])))
  
 def printClientGraph():
@@ -152,12 +161,16 @@ class _edge(object):
         self.edgeId=EdgeId
         edgeDict[EdgeId] = self
         ap1,ap2=EdgeId
-        self.endpoints= (ap1.index, ap2.index)
+        self.points= (ap1.index, ap2.index)
+        self.name="({},{})".format(self.points[0],self.points[1])
         ap1.edges.append((ap2,self))
         ap2.edges.append((ap1,self))
         self.count={}
         WAPGraph.setdefault(ap1,[]).append((ap2, self))
         WAPGraph.setdefault(ap2,[]).append((ap1, self))
+        
+    def __str__(self):
+        return "Edge ({},{})".format(self.points[0],self.points[1])
         
     def event(self, client, eventTime):
         self.count.setdefault(client,[]).append(eventTime)
@@ -193,6 +206,33 @@ class _edge(object):
     def totalCount(self):
         return sum([len(self.count[client]) for client in self.count])
     
+    
+    def inTimeWindow(self,days=[],hours=[], start=None, end=None):
+        if days==[]:
+            daySet=set(range(7))
+        else:
+            daySet=set(days)
+
+        if hours==[]:
+            hourSet=set(range(24))
+        else:
+            hourSet=set(hours)    
+    
+        if start == None: start = 0
+        if end == None: end=time.time()
+
+        daysAndHours = [(day,hour) for day,hour in (time2DayAndHour(eventTime) 
+                        for  eventTime in itertools.chain(*self.count.values()) if (start < eventTime < end))] 
+        
+        weekdaysActive = set([dayOfWeek(day) for day,__ in daysAndHours])
+        hoursActive =  set([hour%24 for __,hour in daysAndHours])
+    
+        return ((hourSet.intersection(set((hour%24 for hour in hoursActive))) != set())
+                and (daySet.intersection(set((dayOfWeek(day)) for day in weekdaysActive)) != set() ))
+    
+    
+    
+    
 APDict = {}    
 
 def wap(event):
@@ -215,13 +255,17 @@ class _wap(object):
         if not str(self.ap_id) in APInformation:
             print("Key Error - AP ID %s missing from APInformation json file" % (str(self.ap_id)))
             self.name="Unknown"
-            self.location= [0,0] 
+            self.location=None 
         else:
             self.name = APInformation[str(self.ap_id)]['name']
-            self.location = tuple(APInformation[str(self.ap_id)]['location'])
+            lat,lng  = tuple(APInformation[str(self.ap_id)]['location'])
+            self.location = (lat,lng)   # swap lat and long to give x=longitude and y=latitude 
         self.days = {}
         self.hours = {}
         self.edges=[]
+        
+     
+        self.coords=[0,0]        
         # Number the APs sequentially from 0 to n-1
         # Use wap.instances to lookup the AP using its index
         
@@ -230,6 +274,10 @@ class _wap(object):
         
     def __str__(self):
         return str(self.ap_id)
+        
+    @property
+    def Capacity(self):
+        return len(self.edges)
         
     def appendEvent(self, event, client):
         
@@ -283,8 +331,31 @@ class _wap(object):
                if (min(itertools.chain(*list(e.count[client].values()))) < end 
                    and max(itertools.chain(*list(e.count[client].values()))) > start)]
        
+       
+    def inTimeWindow(self,days=[],hours=[], start=None, end=None):
+        if days==[]:
+            daySet=set(range(7))
+        else:
+            daySet=set(days)
+
+        if hours==[]:
+            hourSet=set(range(24))
+        else:
+            hourSet=set(hours)    
+    
+        if start == None: start = 0
+        if end == None: end = time.time()
         
-            
+        startDay, startHour = time2DayAndHour(start)
+        endDay, endHour = time2DayAndHour(end)
+    
+        return (hourSet.intersection((hour % 24) for hour in self.hours.keys()
+                                      if startHour <= hour <= endHour) 
+                and daySet.intersection(dayOfWeek(day)  for day in self.days.keys()
+                                      if startDay <= day <= endDay))
+
+
+
 '''
 The event log is scanned in reverse time order.  
 Disassociation events are thus seen before their corresponding association event
@@ -489,8 +560,8 @@ class _client(object):
                         edge(ap,nap, self, eventTime)
                 
             
-            if True: #duration < 2*3600:
-                duration = min(duration,2*3600)
+            if duration < 2*3600:
+                #duration = min(duration,2*3600)
                 
                 # Events in the log file are read in reverse time order.  Thus
                 # the disassociation event is read before the matching association event.
@@ -542,8 +613,8 @@ class _client(object):
                         fixap = self.ExpectedAssociationTime[ap] - expectedAssTime
                         
                         assert fixap < duration + 1,  ("Fixap {} can't be bigger than duration {}".format(fixap, duration))
-                        if fixap > 1000000:
-                            print("Large Fixap value %d on mac %s at time %f" %(fixap, self.mac, eventTime))
+                        if fixap > 30*24*3600:  #  10000000:
+                            print("Month long duration %d on mac %s at time %f" %(fixap, self.mac, eventTime))
                             
                             
                         if fixap > 0:
@@ -589,6 +660,8 @@ class eventLog(object):
     def __init__(self, filenames=[]): 
                  
         
+        filenames= ['allEvents4.json']
+        
         if filenames ==[]:
             filenames=[ 'allEvents0.json', 
                         'allEvents1.json', 
@@ -608,8 +681,7 @@ class eventLog(object):
 
             with open(filename) as json_data:
                 d = json.load(json_data)
-                json_data.close()
- 
+      
             self.LoadEvents(d) 
             
         eventfp.close()
@@ -629,6 +701,33 @@ class eventLog(object):
             self.eventsProcessed+=1
             
         print(("%d events loaded" % (self.eventsProcessed)))
+        
+        
+    def subGraph(self, days=[], hours=[]):
+        apList = [ap for ap in WAPGraph if ap.inTimeWindow(days,hours)]
+        edgeTuples = [(ap,edge) for ap,edge in itertools.chain(*WAPGraph.values()) 
+                    if edge.inTimeWindow(days,hours) ]
+   
+        sg={}
+   
+        # Get all nodes that are active during the window
+        
+        # add all nodes that were visited, even if the client didn't go anywhere else
+        for ap in apList:
+            sg.setdefault(ap,[])
+        
+        
+        # and add all nodes and edges that were visited by moving clients
+        for ap,edge in edgeTuples:
+            sg.setdefault(ap,[])
+            
+            ap1,ap2 = edge.edgeId
+            
+            sg.setdefault(ap1,[]).append((ap2,edge))
+            sg.setdefault(ap2,[]).append((ap1,edge))
+  
+        return sg
+    
 
     def printAccessPointUsage(self):   
 
@@ -790,7 +889,9 @@ class eventLog(object):
             
         c = 0
         
-        while (c < 500):   #  Print 1000 entries. For all, change to len(durations)):
+        
+        limit = min(len(durations),500)
+        while (c < limit):  
             if (c % 10 == 0):  
                 print()
             print("%4d(%4d)," % (durations[c]), end=' ')
@@ -809,7 +910,7 @@ class eventLog(object):
         
         for c in list(ClientDict.values()):
             for day in c.days:
-                w_day = time.localtime(day*24*3600).tm_wday
+                w_day = datetime.utcfromtimestamp(day*24*3600).weekday()
                 for hour in (set(range(day*24, (day+1)*24)) & c.hours):
                     hourInDay = hour % 24
                     clientCounts[w_day][hourInDay] += 1
@@ -820,7 +921,7 @@ class eventLog(object):
         print()
         
         for day in range(7):
-            print("\n%6s" % (DoW[day]), end=' ')
+            print("\n%3s" % (DoW[day]), end=' ')
             for hour in range(24):
                 print("%6d" % (clientCounts[day][hour]), end=' ')
         

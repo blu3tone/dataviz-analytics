@@ -203,6 +203,7 @@ class _edge(object):
         clients=self.movementClients(start=start,end=end) 
         return count/clients
         
+    @property
     def totalCount(self):
         return sum([len(self.count[client]) for client in self.count])
     

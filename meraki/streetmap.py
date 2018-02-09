@@ -53,7 +53,7 @@ def streetBufferObj(vertices):
 
     nodedata['a_position'] = np.array([(vtx[0],
                                        vtx[1],
-                                       0.0)
+                                       -0.045)
                                       for vtx in vertices])
 
     nodedata['a_layer'] = np.array([0.0 for vtx in vertices])

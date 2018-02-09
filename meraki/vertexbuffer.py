@@ -1,5 +1,7 @@
-
+from __future__ import division
 import numpy as np
+
+
 
 
 def vertexBufferObj(vertices):
@@ -14,9 +16,14 @@ def vertexBufferObj(vertices):
     The vertex data may be used to plot edges or points.  Different attributes
     support each drawing mode, as determined by the drawing program.
     
-    VBO data is a 'uniform' because vertices are not expected to move.
-
     '''
+
+    def colorSelect(wt):
+        # Color code from Red for max to blue for min
+        # Moderate the alpha from 20% to 100%
+    
+        return (wt, wt*(1.-wt), (1.-wt), 0.1+0.9*wt)
+
 
     n = len(vertices)
 
@@ -35,17 +42,17 @@ def vertexBufferObj(vertices):
 
     nodedata['a_layer'] = np.array([vtx.layerIndex for vtx in vertices])
 
-    nodedata['a_fg_color'] = 0.4, 0.4, 0.8, 1
+    weights = (np.array([vtx.clientCount for vtx in vertices],
+                          dtype=np.float32))
+    
+    maxC = float(np.max(weights))
 
-    color = np.random.uniform(0.5, 1., (n, 3))
-    # nodedata['a_point_bg_color'] = np.hstack((color, np.ones((n, 1))))
+    nodedata['a_fg_color'] = np.array([colorSelect(wt/np.log(maxC)) for wt in np.log(weights)], dtype=(np.float32,4))
 
-    capacities = np.array([vtx.Capacity for vtx in vertices],
-                          dtype=np.float32)
-    maxC = np.max(capacities)
+    nodedata['a_bg_color'] = (1.0, 1.0, 1.0, 1.0)
 
-    nodedata['a_size'] = capacities * 8.0 / maxC + 2.0
-    nodedata['a_linewidth'] = 2
+    nodedata['a_size'] = weights * 6 / maxC + 1.0
+    nodedata['a_linewidth'] = np.log(weights) * 3 / np.log(maxC) + 1
 
     return nodedata
 

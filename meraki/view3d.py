@@ -42,7 +42,6 @@ uniform mat4 u_projection;
 uniform float u_antialias;
 uniform float u_size;
 uniform float u_offset;
-uniform vec4 u_lyr_fg_color[32];
 uniform vec4 u_color;
 uniform int  u_layerMap[32];
 uniform vec4 u_bg_color;
@@ -79,7 +78,7 @@ void main (void) {
     v_linewidth = a_linewidth;
     v_antialias = u_antialias;
 
-    v_fg_color  = u_lyr_fg_color[lyridx];
+    v_fg_color  = a_fg_color;
 
     if (u_color.a >= 0.0)
          {
@@ -157,6 +156,8 @@ float marker(vec2 P, float size)
     return r;
 }
 """
+
+
 
 
 fs = """
@@ -248,7 +249,7 @@ void main(){
 
 
 def SelectVertices(edges):
-    Nodes = list(set(itertools.chain(*[e.points for e in edges])))
+    Nodes = list(set(itertools.chain(*[e.nodepoints for e in edges])))
     pointArray = np.array(Nodes, dtype=(np.uint32, 1))
     return pointArray
 
@@ -294,29 +295,6 @@ def baseLayerEdges(network):
     links = baseLayer.edgeIndices
     edgeVertices = np.array(links, dtype=(np.uint32, 2))
     return edgeVertices
-
-
-#def loadSelectedTrailLinks(edgeList):
-    #'''
-    #Returns the vertex endpoints of the links that serve any
-    #trail that is in the client or server list.  Used to create
-    #a ghost image to provide context.
-    #'''
-
-    #linkList = []
-    #trails = [t for t in edgeList if isinstance(t, Trail)]
-
-    #for t in trails:
-        #linkList.extend(t.servers)
-
-    #linkList = list(set(linkList))
-
-    #edgeVertices = np.array([(l.points[0].vtx, l.points[1].vtx)
-                             #for l in linkList],
-                            #dtype=(np.uint32, 2))
-
-    #return edgeVertices
-
 
 class GlProgram(gloo.Program):
 
@@ -419,10 +397,9 @@ class Canvas(app.Canvas):
 
         self.worldCenterZ = self.far + 2.0
 
-        self.work = self.prot = None
+        self.selectedEdges = None
 
-        self.workIndex = None
-        self.protIndex = None
+        self.selectedEdgesIndex = None
         self.sVerticalsIndex = None
         self.highlightIndex = None
         self.selectedIndex = None
@@ -503,7 +480,6 @@ class Canvas(app.Canvas):
         self.program.bind(model.vbo)
         
         for lyr in range(32):
-            self.program['u_lyr_fg_color[%d]' % lyr] = self.pointColorDefault
             self.program['u_layerMap[%d]' % lyr] = lyr
 
         self.program['u_size'] = 1
@@ -516,11 +492,10 @@ class Canvas(app.Canvas):
                                    parent=self.program)
         self.program_b.bind(self.streetVbo)
         for lyr in range(32):
-            self.program_b['u_lyr_fg_color[%d]' % lyr] = self.baseColorDefault
             self.program_b['u_layerMap[%d]' % lyr] = lyr
 
         self.program_b['u_size'] = 1
-        self.program_b['u_color'] = (0.6, 0.6, 0.6, 1)
+        self.program_b['u_color'] = (0.6, 0.6, 0.6, 1.0)
         self.program_b['u_bg_color'] = (0.2, 0.2, 0.2, -0.6)
         self.program_b['u_antialias'] = u_antialias
         self.program_b['u_offset'] = -0.05
@@ -528,14 +503,13 @@ class Canvas(app.Canvas):
 
         self.program_e = GlProgram(canvas=self, vert=vert, frag=fs,
                                    parent=self.program)
-        self.program_e.bind(model.vbo)
+        self.program_e.bind(model.edgeEndPointVbo)
         
         for lyr in range(32):
-            self.program_e['u_lyr_fg_color[%d]' % lyr] = self.edgeColorDefault
             self.program_e['u_layerMap[%d]' % lyr] = lyr
 
         self.program_e['u_size'] = 1
-        self.program_e['u_color'] = (0.2, 0.2, 0.8, -0.6)
+        self.program_e['u_color'] = (0.9, 0.2, 0.2, -1.0)
         self.program_e['u_bg_color'] = (0.2, 0.2, 0.2, -0.6)
         self.program_e['u_antialias'] = u_antialias
 
@@ -556,12 +530,9 @@ class Canvas(app.Canvas):
 
         self.highlight_e = GlProgram(canvas=self, vert=vert, frag=fs,
                                      parent=self.program, heightOffset=0.001)
-        self.highlight_e.bind(model.vbo)
+        self.highlight_e.bind(model.edgeEndPointVbo)
 
         for lyr in range(32):
-            self.highlight_e[
-                'u_lyr_fg_color[%d]' %
-                lyr] = self.edgeColorDefault
             self.highlight_e['u_layerMap[%d]' % lyr] = lyr
 
         self.highlight_e['u_size'] = 1.5
@@ -639,10 +610,9 @@ class Canvas(app.Canvas):
         """
         Text labels for listed edges
         """
-        vertices = list(set([v for e in edges for v in e.edgeId]))
+        vertices = list(set([getattr(v,'node',v) for e in edges for v in e.edgeId]))
 
         labels = [str(node.name) for node in vertices]
-        layerIndices = np.array(self.model.networkLayers)
         
         coords = [node.coords for node in vertices]
         model = rotate(90, (0, 0, 1))
@@ -947,9 +917,9 @@ class Canvas(app.Canvas):
             self.highlightPointIndex = gloo.IndexBuffer(highlightPoints)
             self.highlightHeightOffset = 0
 
-    def SelectAndNotify(self, obj, work, prot):
-        self.Select(obj, work, prot)
-        #self.parent.NotifySelected(obj, work, prot)
+    def SelectAndNotify(self, obj, selectedEdges):
+        self.Select(obj, selectedEdges)
+        #self.parent.NotifySelected(obj, selectedEdges)
 
     def Reset (self):
         vFocus = np.array([0., 0., self.worldCenterZ, 1.],
@@ -958,22 +928,22 @@ class Canvas(app.Canvas):
         self.zoomAndPan(zoomCenter=vFocus, zoomIdx=0)
         self.saveZoomAndPan()
 
-        W = P = None
-        self.Select(self.highlighted, W, P)
+        selectedEdges = None
+        self.Select(self.highlighted, selectedEdges)
 
 
-    def Select(self, obj, work, prot):
+    def Select(self, obj, selectedEdges):
 
         self.undo.save(operation=self._Select,
-                       rState=(obj, work, prot),
-                       uState=(self.selectedObject, self.work, self.prot))
-        self.selectedObject, self.work, self.prot = obj, work, prot
-        self._Select((obj, work, prot))
+                       rState=(obj, selectedEdges),
+                       uState=(self.selectedObject, self.selectedEdges))
+        self.selectedObject, self.selectedEdges = obj, selectedEdges
+        self._Select((obj, selectedEdges))
 
     def _Select(self, state):
-        obj, work, prot = state
+        obj, selectedEdges = state
         self._setSelectedItem(obj)
-        self._SetSelectionList((work, prot))
+        self._SetSelectionList((selectedEdges))
 
     def _setSelectedItem(self, obj):
         self.selectedObject = obj
@@ -986,7 +956,6 @@ class Canvas(app.Canvas):
             self.highlight = obj
 
             if hasattr(obj,'edgeId'):
-                p1, p2 = obj.points
                 edgeList = []
                 edgeList.append(obj.points)
                 pointList = list(obj.points)
@@ -1012,62 +981,42 @@ class Canvas(app.Canvas):
             self.selectedIndex = None
             self.selectedPointIndex = None
             
-    def SetSelectionList(self, work, prot):
+    def SetSelectionList(self, selectedEdges):
         self.undo.save(operation=self._SetSelectionList,
-                       rState=(work, prot),
-                       uState=(self.work, self.prot))
-        self.work, self.prot = work, prot
+                       rState=(selectedEdges),
+                       uState=(self.selectedEdges))
+        self.selectedEdges = selectedEdges
 
     def _SetSelectionList(self, state):
 
-        # print "Change selection:  Work %s   Prot %s " % (
-        #   ", ".join(obj.name for obj in work),
-        #   ", ".join(obj.name for obj in prot))
+        self.selectedEdges = selectedEdges = state
 
-        self.work, self.prot = work, prot = state
-
-        if work:
-            self.workEdges = LoadSelectedEdges(work)
-            self.workIndex = gloo.IndexBuffer(self.workEdges)
+        if selectedEdges:
+            self.workEdges = LoadSelectedEdges(selectedEdges)
+            self.selectedEdgesIndex = gloo.IndexBuffer(self.workEdges)
         else:
-            self.workIndex = self.workTrailIndex = None
+            self.selectedEdgesIndex = self.workTrailIndex = None
 
-        if prot:
-            self.protEdges, self.protTrails = LoadSelectedEdges(prot)
-            self.protIndex = gloo.IndexBuffer(self.protEdges)
-            self.protTrailIndex = gloo.IndexBuffer(self.protTrails)
-        else:
-            self.protIndex = self.protTrailIndex = None
-
-        if work or prot:
-            #verticals = SelectVerticals(work | prot)
+        if selectedEdges:
+            #verticals = SelectVerticals(selectedEdges)
             #self.sVerticalsIndex = gloo.IndexBuffer(verticals)
 
-            points = SelectVertices(work | prot)
+            points = SelectVertices(selectedEdges )
             self.sPointsIndex = gloo.IndexBuffer(points)
 
-            self.loadNodeLabels(work | prot)
+            self.loadNodeLabels(selectedEdges)
 
             #if isinstance(self.selectedObject, Vertex):
                 #self.loadNodeLabels([self.selectedObject])
             #elif isinstance(self.selectedObject, Edge):
                 #self.loadNodeLabels(self.selectedObject.points)
 
-            #selectedTrails = set([t for t in work | prot
-            #                      if isinstance(t, Trail)])
-
-            #if selectedTrails:
-            #    trailLinks = loadSelectedTrailLinks(selectedTrails)
-            #    self.trailsLinksIndex = gloo.IndexBuffer(trailLinks)
-            #else:
-            #    self.trailsLinksIndex = None
-
             # Dim whatever's not selected by setting a to 0.1
             self.edgeColor = self.edgeColorDefault[:-1] + (0.1, )
             self.pointColor = self.pointColorDefault[:-1] + (0.1, )
             self.verticalColor = self.verticalColorDefault[:-1] + (0.1,)
 
-            #self.activeLayers = list(set(e.layer.idx for e in work | prot))
+            #self.activeLayers = list(set(e.layer.idx for e in selectedEdges))
             #layerMap = dict(list(zip(self.activeLayers,
                                 #list(range(len(self.activeLayers))))))
 
@@ -1102,25 +1051,16 @@ class Canvas(app.Canvas):
         clear(color=True, depth=True)
         self.program_p.draw('triangles')
 
-        if self.protIndex or self.workIndex:
+        self.program_b['u_size'] = 1
+        self.program_b['u_color'] = self.baseColorDefault
+        self.program_b.draw('lines', self.baseIndex)
 
-            self.program_b['u_color'] = self.baseColorDefault
+        if self.selectedEdgesIndex:
+            #self.program_e['u_color'] = self.edgeColorDefault
 
-            self.program_b.draw('lines', self.baseIndex)
-            #self.program_e.draw('lines', self.trailsLinksIndex)
-
-            self.program_e['u_color'] = self.edgeColorDefault
-
-            if self.workIndex:
-                self.program_e.draw('lines', self.workIndex)
-                #self.program_e['u_color'] = self.trailColor
-                #self.program_e.draw('lines', self.workTrailIndex)
-
-            if self.protIndex:
-                self.program_e.draw('lines', self.protIndex)
-                #self.program_e['u_color'] = self.trailColor
-                #self.program_e.draw('lines', self.protTrailIndex)
-
+            if self.selectedEdgesIndex:
+                self.program_e.draw('lines', self.selectedEdgesIndex)
+                
             #self.program_e['u_color'] = self.verticalColorDefault
             #self.program_e.draw('lines', self.sVerticalsIndex)
 
@@ -1141,23 +1081,14 @@ class Canvas(app.Canvas):
 
         else:
             
-            self.program_b['u_size'] = 1
-            self.program_b['u_color'] = self.baseColorDefault            
-            self.program_b.draw('lines', self.baseIndex)            
             
             self.program_e['u_size'] = 1
-            self.program_e['u_color'] = self.edgeColor
             self.program_e.draw('lines', self.edgesIndex)
-
-            #self.program_e['u_color'] = self.trailColor
-            #self.program_e.draw('lines', self.trailsIndex)
 
             self.program['u_color'] = self.pointColor
             self.program.draw('points', self.markerIndex)
             # self.nodeLabels.draw()
 
-            #self.program_e['u_color'] = self.verticalColor
-            #self.program_e.draw('lines', self.vindex)
 
         if self.selectedIndex is not None:
             self.highlight_e['u_color'] = self.selectedColor
@@ -1460,9 +1391,9 @@ class Canvas(app.Canvas):
                 self.highlightT = t
 
                 if t < 0.15:
-                    self.highlight = p1
+                    self.highlight = p1.node
                 elif t > 0.85:
-                    self.highlight = p2
+                    self.highlight = p2.node
                 else:
                     self.highlight = edge
 
@@ -1544,9 +1475,9 @@ class Canvas(app.Canvas):
                 closest, z, t = res
                 return (candidates[closest], z, t)
 
-        if self.work or self.prot:
+        if self.selectedEdges:
             links = list(set(self.model.edgeList)
-                         & (self.work | self.prot))
+                         & (self.selectedEdges ))
             return searchForClosest(links)
 
         else:
@@ -1589,11 +1520,10 @@ class Canvas(app.Canvas):
                 if d < 20:
                     if ((now - self.ClickStart) < 0.25):
                         # Mouse Left-Click
-                        W=P=[]
-                        W, P = self.model.network.ClientsAndServers(self.highlighted)
+                        selectedEdgeList = self.model.network.ClientsAndServers(self.highlighted)
                         # print "Selected %s: %s  " % (self.highlighted.name ,
-                        #          ", ".join(e.name for e in W | P) )
-                        self.SelectAndNotify(self.highlighted, W, P)
+                        #          ", ".join(e.name for e in selectedEdges | P) )
+                        self.SelectAndNotify(self.highlighted, selectedEdgeList)
 
                     #if ((now - self.DCTime) < 0.35):
                         ## Double Click handler might open a popup menu
@@ -1603,8 +1533,8 @@ class Canvas(app.Canvas):
                 elif ((now - self.ClickStart) < 0.25):
                     # click with distance between
                     # mouse and selected item more than 20 pixels
-                    W = P = None
-                    self.SelectAndNotify(self.highlighted, W, P)
+                    selectedEdgeList = None
+                    self.SelectAndNotify(self.highlighted, selectedEdgeList)
 
                 else:
                     # End of left mouse drag operation
@@ -1657,7 +1587,7 @@ class Canvas(app.Canvas):
         #  "Call to popup menu goes here"
         print("Selected %s: %s  " % (
             self.highlighted.name,
-            ", ".join(e.name for e in self.work | self.prot)))
+            ", ".join(e.name for e in self.selectedEdges )))
 
 
 class NetworkModel3D(object):
@@ -1670,10 +1600,14 @@ class NetworkModel3D(object):
 
         network = self.network = kwargs.pop('network')
         vertices = kwargs.pop('vertices')
+        edgeVertices = kwargs.pop('edgeVertices')
         self.viewLayers = kwargs.pop('viewLayers', None)
 
         data = vertexBufferObj(vertices)
         self.vbo = gloo.VertexBuffer(data)
+
+        edgeData = vertexBufferObj(edgeVertices)
+        self.edgeEndPointVbo = gloo.VertexBuffer(edgeData)
 
         self.markers = np.array(nodeLayerIndices(network.nodeList),
                            dtype=np.uint32)
@@ -1706,7 +1640,10 @@ class Panel3D(wx.Panel):
 
         self.frameSize = parent.Size
 
-        self.model = NetworkModel3D(network=net, viewLayers=viewLayers, vertices=net.nodeList)
+        self.model = NetworkModel3D(network=net, 
+                                    viewLayers=viewLayers, 
+                                    vertices=net.nodeList,
+                                    edgeVertices=net.endPointList)
 
         self.canvas = Canvas(app="wx", parent=self, model=self.model, position=(0,0))
 
@@ -1719,12 +1656,12 @@ class Panel3D(wx.Panel):
         w, h = event.GetSize()
         self.canvas.resize(w, h)
 
-    def Select(self, obj, work, prot):
-        self.canvas.Select(obj, work, prot)
+    def Select(self, obj, selectedEdges):
+        self.canvas.Select(obj, selectedEdges)
 
-    def NotifySelected(self, obj, work, prot):
+    def NotifySelected(self, obj, selectedEdges):
         print("Notify Selected Objects ...{}".format(obj))
-        ##self.parent.Set2DSelectionList(work, prot)
+        ##self.parent.Set2DSelectionList(selectedEdges)
         ##self.parent.context.SetItems([obj])
 
     def setAnimator(self, keyFrames=None):

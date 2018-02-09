@@ -12,17 +12,47 @@ from logreader import WAPGraph, ReadMerakiLogs
 #from networkEdge import Link, Trail, Demand, Bypass, Edge
 
 LayerDict = {}
+endPointList = []
 NodeList = []
 EdgeList = []
-
+nodeLayerDict = {}
 
 #Given an a ap return the equivalent Node for a given layer
+# Line and area color and width attributes must be carried to the shaders 
+# on their end point vertices.  
+# To color edges and control their width we thus create new endpoint objects associated
+# with each edge
+#
 
-nodeLayerDict = {}
+
+
+class EndPoint(object):
+    def __init__(self,edge,node):
+        self.edge=edge
+        self.node=node
+        self.layerIndex=node.layerIndex
+        
+        self.index = len(endPointList)    
+        self.layerOffset=0.0
+        self.nap=node
+        self.edges=[]
+        endPointList.append(self)
+        
+    @property    
+    def clientCount(self):
+        # Override the Node Capacity with the capacity of the underlying  edge
+        return self.edge.totalCount
+        
+        
+    def __getattr__(self, name):
+        return getattr(self.nap, name)
+
 
 class Edge(object):
     '''
     Represents a layer unique version of an _edge object
+    Creates dedicated endpoint vertices to attach color and width data
+    The endpoint vertices are stored in a dedicated VBO
     '''
     def __init__(self, e, layer):
         self.edge=e
@@ -34,11 +64,22 @@ class Edge(object):
         n1=nodeLayerDict[(ap1,layer)]
         n2=nodeLayerDict[(ap2,layer)]
         
-        self.edgeId= tuple(sorted([n1, n2],key=operator.attrgetter('index')))
-        self.points= (n1.index,n2.index)
+        n1.edges.append((n2,self))
+        n2.edges.append((n1,self))
+        
+        ep1 = EndPoint(self, n1)
+        ep2 = EndPoint(self, n2)
+        
+        ep1.edges=[(n2,self)]
+        ep2.edges=[(n1,self)]
+        
+        self.edgeId= tuple(sorted([ep1, ep2],key=operator.attrgetter('index')))
+        self.points= (ep1.index,ep2.index)
+        self.nodes = tuple(sorted([n1, n2],key=operator.attrgetter('index')))
+        self.nodepoints = (n1.index, n2.index)
                 
         EdgeList.append (self)
-        
+          
     def __getattr__(self,name):
         return getattr(self.edge,name)
  
@@ -62,7 +103,10 @@ class Node(object):
         nodeLayerDict[(ap,layer)] = self
         self.edges=[]
         NodeList.append(self)
-    
+   
+    @property
+    def clientCount(self):
+        return self.wap.Capacity
         
     def __getattr__(self, name):
         return getattr(self.wap, name)
@@ -135,6 +179,7 @@ class Network(object):
 
         self.nodeList = NodeList
         self.edgeList = EdgeList
+        self.endPointList = endPointList
 
         self.layerCount=0
         self.LayerList=[]
@@ -164,7 +209,7 @@ class Network(object):
 
         self.NormalizeCoords()
         
-        self.networkLayers=[n.layerIndex for n in NodeList]
+        self.networkLayers=[n.layerIndex for n in endPointList]
         
         self.NormalizedBoundingBox = [x/1.0 for x in self.bbox]
         
@@ -174,7 +219,7 @@ class Network(object):
         
         
         
-  
+        
     def NormalizeCoords(self):
         
         
@@ -190,9 +235,31 @@ class Network(object):
         self.layerHeights = [ 2.0*idx/layerCount - 1.0
                               for idx in range(layerCount) ]        
 
-        self.nodeLocations = [[0,0]] * len(NodeList)
+        self.endPointLocations = [[0,0,0]] * len(endPointList)
         self.vertexLocations = []
         idx=0
+        for n in endPointList:
+            if n.location:
+                lat, lng = n.location
+            else:
+                print ("Node {} in layer {} has no location".format(n.ap_id, n.layer.name))
+                lat,lng = minLat, minLong
+
+            # Convert Latitude and Longitude to an orthogonal projection:
+   
+            x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
+            
+            #Scale to fit within a 1x1 cube for OpenGL 
+            n.coords = (x/self.scale, y/self.scale, n.layerIndex)
+            
+            n.idx=idx
+            self.endPointLocations[n.idx] = n.coords
+            idx+=1
+
+            self.vertexLocations.append((n.coords[0], n.coords[1], n.layerIndex))
+        
+        idx=0
+        self.nodeLocations = [[0,0,0]] * len(NodeList)    
         for n in NodeList:
             if n.location:
                 lat, lng = n.location
@@ -211,12 +278,11 @@ class Network(object):
             self.nodeLocations[n.idx] = n.coords
             idx+=1
 
-            self.vertexLocations.append((n.coords[0], n.coords[1], n.layerIndex))
      
 
     def BoundingBox(self):
         # Find a bounding box for all nodes in all layers
-        nodeLocations = [n.location for n in self.nodeList if n.location != None]
+        nodeLocations = [n.location for n in NodeList if n.location != None]
         maxLat, maxLong = (max(lat for lat,__ in nodeLocations),
                       max(lng for __,lng in nodeLocations))
                       
@@ -230,17 +296,16 @@ class Network(object):
                    for lyr in self.LayersDict.values() if lyr.MinLength > 0)
 
     def ClientsAndServers(self, obj):
-        W = P = set()
+        selectedEdges = set()
 
-        if hasattr(obj, 'edgeId'):
-            #W = set(obj.EdgeId) 
-            W = set(e for ap in obj.edgeId for nap,e in ap.edges)
+        if hasattr(obj, 'nodes'):
+            selectedEdges = set(e for node in obj.nodes for nap,e in node.edges)
             
             
         elif hasattr(obj, 'edges'):
-            W = set(e for nap, e in obj.edges)
+            selectedEdges = set(e for nap, e in obj.edges)
 
-        return (W, P)
+        return selectedEdges
 
 
  

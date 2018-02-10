@@ -74,6 +74,16 @@ def evtime2String(evtime):
     dt = utc_dt.astimezone(tz)
     return dt.strftime("%a %m/%d/%y")
  
+def eventTimeInTimeWindow(eventTime,  **kwargs):
+    days=kwargs.pop('days', range(7))
+    hours=kwargs.pop('hours', range(24))
+    start=kwargs.pop('start',0)
+    end=kwargs.pop('end', time.time())    
+    d,h = time2DayAndHour(eventTime)
+    
+    return (start<=eventTime<=end  and dayOfWeek(d) in days and h%24 in hours)
+ 
+ 
 with open('data/AccessPoints.json') as APfile:    
     APInformation = json.load(APfile)
     APfile.close()
@@ -86,7 +96,7 @@ def manufacturer(mac):
     
 WAPGraph= {}       
 
-def subsetClientGraph(clients, start, end):
+def subsetClientGraph(clients, start=0, end=time.time()):
     G= {}
     
     for edge in list(edgeDict.values()):
@@ -96,7 +106,7 @@ def subsetClientGraph(clients, start, end):
             G.setdefault(ap2,[]).append((ap1,edge))
     return G  
 
-def printMovementGraph():
+def printMovementGraph(**kwargs):
     print('''
     The graph shows movement of clients between APs.  Graph format is x:  [y: count, ...]
     where count is the number of movements of clients between APs x and y. 
@@ -107,10 +117,10 @@ def printMovementGraph():
     
     for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}: {}".format(n1.index,
-                                 ", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.totalCount()) 
+                                 ", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementCount(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ])))
  
-def printClientGraph():
+def printClientGraph(**kwargs):
     print('''
     The graph shows movement of clients between APs.  Graph format is x:  [y: count, ...]
     where count is the number of clients that moved between APs x and y
@@ -123,10 +133,10 @@ def printClientGraph():
     
     for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}:".format(n1.index), end=' ')
-        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementClients()) 
+        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementClients(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
  
-def printCountToClientRatioGraph(): 
+def printCountToClientRatioGraph(**kwargs): 
     print('''
        The graph provides an indication of regular user movement of clients between APs.  
        Graph format is x:  [y: ratio, ...] where ratio is the count of clients that moved 
@@ -138,7 +148,7 @@ def printCountToClientRatioGraph():
     
     for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}:".format(n1.index), end=' ')
-        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.CountToClientRatio()) 
+        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.CountToClientRatio(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
 
 edgeDict = {} 
@@ -174,65 +184,35 @@ class _edge(object):
         
     def event(self, client, eventTime):
         self.count.setdefault(client,[]).append(eventTime)
+     
+     
+    def clientMovementTimes(self, client, **kwargs):
+        return [eventTime for  eventTime in self.count[client] 
+                        if eventTimeInTimeWindow(eventTime, **kwargs) ] 
+                
         
-    def movementCount(self, clients=[], start=0,end=None):
-        if not end:
-            if not clients and start==0:
-                return sum([len(self.count[client]) for client in self.count])
-            end = time.time()
-        if not clients:
-            clients = list(self.count.keys())
+    def countSubset(self, **kwargs):
         
-        return sum((self.count[client] for client in clients 
-                    if (min(itertools.chain(*list(self.count[client].values()))) < end 
-                        and max(itertools.chain(*list(self.count[client].values()))) > start)                    
-                   ))
- 
-    def movementClients(self, start=0, end=None):
-        if not end:
-            if start == 0:
-                return len(self.count)
-            end = time.time()
+        clients = kwargs.pop('clients', self.count.keys())
+        
+        return dict((c,el) for c,el in ((client, self.clientMovementTimes(client, **kwargs)) 
+                                        for client in clients) if len(el)>0)
 
-        return len([client for client in self.count 
-                   if ((start < max(self.count[client].values))
-                       and (end > min(self.count[client].values)))])
-    
-    def CountToClientRatio(self, start=0, end=None):
-        count=self.movementCount(clients=[],start=start, end=end)
-        clients=self.movementClients(start=start,end=end) 
+    def CountToClientRatio(self, **kwargs):
+        count=self.movementCount(**kwargs)
+        clients=self.movementClients(**kwargs) 
         return count/clients
-        
-    @property
-    def totalCount(self):
-        return sum([len(self.count[client]) for client in self.count])
-    
-    
-    def inTimeWindow(self,days=[],hours=[], start=None, end=None):
-        if days==[]:
-            daySet=set(range(7))
-        else:
-            daySet=set(days)
 
-        if hours==[]:
-            hourSet=set(range(24))
-        else:
-            hourSet=set(hours)    
+    def movementClients(self, **kwargs):
+        return len(self.countSubset(**kwargs).keys())
+  
+    def movementCount(self, **kwargs):
+        clients=kwargs.pop('clients', self.count.keys())
+  
+        return sum([len(self.clientMovementTimes(client, **kwargs)) for client in clients]) 
     
-        if start == None: start = 0
-        if end == None: end=time.time()
-
-        daysAndHours = [(day,hour) for day,hour in (time2DayAndHour(eventTime) 
-                        for  eventTime in itertools.chain(*self.count.values()) if (start < eventTime < end))] 
-        
-        weekdaysActive = set([dayOfWeek(day) for day,__ in daysAndHours])
-        hoursActive =  set([hour%24 for __,hour in daysAndHours])
-    
-        return ((hourSet.intersection(set((hour%24 for hour in hoursActive))) != set())
-                and (daySet.intersection(set((dayOfWeek(day)) for day in weekdaysActive)) != set() ))
-    
-    
-    
+    def inTimeWindow(self, **kwargs):
+        return (len(self.countSubset(**kwargs)) > 0)
     
 APDict = {}    
 
@@ -243,8 +223,6 @@ def wap(event):
         APDict[apID] = _wap(event)
     
     return APDict[apID]
-
-    
     
 class _wap(object):
     instances =[]  # Keep track of instances
@@ -323,29 +301,20 @@ class _wap(object):
         for wDay in range (7):
             print(("%4s: %6d") % (DoW[wDay], weekdayTotals[wDay]))
     
-    def networkEdges(self, start=0, end= None):
-        if end == None:
-            end = time.time()
-        
+    def networkEdges(self, start=0, end=time.time()):
+      
         return [(nap,e) for nap,e in self.edges 
                 for client in e.count 
                if (min(itertools.chain(*list(e.count[client].values()))) < end 
                    and max(itertools.chain(*list(e.count[client].values()))) > start)]
        
        
-    def inTimeWindow(self,days=[],hours=[], start=None, end=None):
-        if days==[]:
-            daySet=set(range(7))
-        else:
-            daySet=set(days)
-
-        if hours==[]:
-            hourSet=set(range(24))
-        else:
-            hourSet=set(hours)    
-    
-        if start == None: start = 0
-        if end == None: end = time.time()
+    def inTimeWindow(self, **kwargs):
+        start = kwargs.pop('start', 0)
+        end = kwargs.pop('end', time.time())
+        
+        daySet = set(kwargs.pop('days', range(7)))
+        hourSet = set(kwargs.pop('hours', range(24)))
         
         startDay, startHour = time2DayAndHour(start)
         endDay, endHour = time2DayAndHour(end)
@@ -704,10 +673,10 @@ class eventLog(object):
         print(("%d events loaded" % (self.eventsProcessed)))
         
         
-    def subGraph(self, days=[], hours=[]):
-        apList = [ap for ap in WAPGraph if ap.inTimeWindow(days,hours)]
+    def subGraph(self, **kwargs):
+        apList = [ap for ap in WAPGraph if ap.inTimeWindow(**kwargs)]
         edgeTuples = [(ap,edge) for ap,edge in itertools.chain(*WAPGraph.values()) 
-                    if edge.inTimeWindow(days,hours) ]
+                    if edge.inTimeWindow(**kwargs) ]
    
         sg={}
    
@@ -970,8 +939,17 @@ def __test():
         print("{:>4d}  {:>16d}   {:<30}".format(ap.index, ap.ap_id, ap.name))
     
     printMovementGraph()
+
+    print ("\n\nClient Graph for full period" )
     printClientGraph()
+
     printCountToClientRatioGraph()
+
+    print("\n\n Client Graph for weekday rush hour")
+
+    printClientGraph(days=[0,1,2,3,4], hours=[7,8,9])
+
+
     log.printAccessPointUsageColumns()
     log.printAccessPointUsageByHour()
     log.clientDailyConnectionTimes()

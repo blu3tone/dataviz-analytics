@@ -30,6 +30,8 @@ class EndPoint(object):
     def __init__(self,edge,node):
         self.edge=edge
         self.node=node
+        
+        self.layer=node.layer
         self.layerIndex=node.layerIndex
         
         self.index = len(endPointList)    
@@ -38,10 +40,14 @@ class EndPoint(object):
         self.edges=[]
         endPointList.append(self)
         
-    @property    
-    def clientCount(self):
+  
+    def clientCount(self, **kwargs):
+        
+        if kwargs=={}:
+            kwargs = self.layer.window
+        
         # Override the Node Capacity with the capacity of the underlying  edge
-        return self.edge.totalCount
+        return self.edge.movementCount(**kwargs)
         
         
     def __getattr__(self, name):
@@ -104,8 +110,7 @@ class Node(object):
         self.edges=[]
         NodeList.append(self)
    
-    @property
-    def clientCount(self):
+    def clientCount(self, **kwargs):
         return self.wap.Capacity
         
     def __getattr__(self, name):
@@ -117,10 +122,11 @@ class Layer(object):
     A 2d Graph that overlays a map
     '''
   
-    def __init__(self, name, graph, layerNumber=0):
+    def __init__(self, name, graph, window, layerNumber=0):
         # edges is a graph in standard dictionary of lists of node edge tuple pairs
         
         self.name = name
+        self.window=window
         self.index=layerNumber
         LayerDict[name] = self
         self.edgeList=[]
@@ -187,22 +193,25 @@ class Network(object):
              
         if layers==[]:
             log=ReadMerakiLogs()
-            layers.append(('WiFi', WAPGraph))
+            layers.append(('WiFi', WAPGraph, {}))
                          
-            WeekendGraph=log.subGraph(days=[5], hours=[3])
-            layers.append(('Weekend', WeekendGraph))
+            window = dict(days=[0,1,2,3,4], hours=[16,17,18])             
+            afternoonCommute=log.subGraph(**window)
+            layers.append(('afternoonCommute', afternoonCommute, window))
 
-            morningCommute = log.subGraph(days=[4], hours=[8])
-            layers.append(('morningCommute', morningCommute))
+            
+            window= dict(days=[0,1,2,3,4], hours=[6,7,8])
+            morningCommute = log.subGraph(**window)
+            layers.append(('morningCommute', morningCommute,window))
             
         
-        for layerName, graph  in layers:
+        for layerName, graph, window  in layers:
             """
             layers is a dictionary where the keys are the names of the layers.
             Example layers are "WiFi", "MotionLoft", "BigBelly", "Streets", "Subways"
             The value file points to a dictionary that contains a Graph
             """
-            l = Layer(layerName, graph, layerNumber=self.layerCount)
+            l = Layer(layerName, graph, window, layerNumber=self.layerCount)
             LayerDict[layerName] = l
             self.LayerList.append(l)
             self.layerCount+=1    

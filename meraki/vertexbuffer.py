@@ -3,6 +3,11 @@ import numpy as np
 
 
 
+def colorSelect(wt):
+    # Color code from Red for max to cyan for min
+    return (0.5*(1+wt), (1-wt), (1.-wt), wt)
+
+
 
 def vertexBufferObj(vertices):
     '''
@@ -18,11 +23,6 @@ def vertexBufferObj(vertices):
     
     '''
 
-    def colorSelect(wt):
-        # Color code from Red for max to blue for min
-        # Moderate the alpha from 20% to 100%
-    
-        return (wt, wt*(1.-wt), (1.-wt), 0.1+0.9*wt)
 
 
     n = len(vertices)
@@ -42,17 +42,19 @@ def vertexBufferObj(vertices):
 
     nodedata['a_layer'] = np.array([vtx.layerIndex for vtx in vertices])
 
-    weights = (np.array([vtx.clientCount for vtx in vertices],
+    weights = (np.array([vtx.clientCount() for vtx in vertices],
                           dtype=np.float32))
     
     maxC = float(np.max(weights))
 
     nodedata['a_fg_color'] = np.array([colorSelect(wt/np.log(maxC)) for wt in np.log(weights)], dtype=(np.float32,4))
+    #nodedata['a_fg_color'] = np.array([colorSelect(wt/maxC) for wt in weights], dtype=(np.float32,4))
 
     nodedata['a_bg_color'] = (1.0, 1.0, 1.0, 1.0)
 
     nodedata['a_size'] = weights * 6 / maxC + 1.0
     nodedata['a_linewidth'] = np.log(weights) * 3 / np.log(maxC) + 1
+    # nodedata['a_linewidth'] = weights * 3 / maxC + 1
 
     return nodedata
 
@@ -67,5 +69,12 @@ def edgeIndices(edges):
     edgeEndPoints = [e.endPoints for e in edges]
     return np.array(edgeEndPoints, dtype=(np.uint32, 2))
 
+def updateColors(vertices, **kwargs):
+    
+    weights = (np.array([vtx.clientCount(**kwargs) for vtx in vertices],
+                          dtype=np.float32))    
+    
+    maxC = float(np.max(weights))
 
-
+    return np.array([colorSelect(wt/np.log(maxC)) for wt in np.log(weights)], dtype=(np.float32,4))
+    

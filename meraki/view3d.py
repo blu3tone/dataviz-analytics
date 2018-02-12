@@ -262,7 +262,7 @@ def LoadPlanes(network):
                                          np.float32, 1),
                                         ])
 
-    x0, y0, x1, y1 = network.NormalizedBoundingBox
+    x0, y0, x1, y1 = [a*1.05 for a in network.NormalizedBoundingBox]
 
     layerdata['a_position'] = np.array([(x, y, -0.002) for z in range(nl)
                                         for x, y in [[x0, y0],
@@ -462,7 +462,7 @@ class Canvas(app.Canvas):
         self.dependents = []
         self.dependencies = {}
 
-        self.updateLayerSpacing(self.spacing)
+        # self.updateLayerSpacing(self.spacing)
 
         self.undo = UndoBuffer(operation=self._updateView,
                                rState=(self.wFocus, self.vFocus,
@@ -542,6 +542,7 @@ class Canvas(app.Canvas):
 
         self.updateFrustum(zoomIdx=0, size=self.size)
 
+        self.updateLayerSpacing(self.spacing)
         self.loadLayerLabels()
         self.loadNodeLabels(self.model.edgeList)        
         
@@ -638,13 +639,13 @@ class Canvas(app.Canvas):
 
         nl = len(coords)
 
-        zCoords = np.array([self.layerZCoordinates[self.layerMap[int(i)]]
+        zCoords = np.array([self.layerZCoordinates[self.layerMap[int(i)] ]
                             for i in layerIndices], dtype=np.float32)
 
-        #zOffsets = np.array(coords[:, -1], dtype=np.float32)
+        zOffsets = np.add(coords[:,2],zCoords)
 
         self.worldVertexPositions = np.hstack((coords[:, :-1],
-                                               zCoords.reshape(nl, 1),
+                                               zOffsets.reshape(nl, 1),
                                                np.ones((nl, 1))))
 
 
@@ -1625,7 +1626,7 @@ class NetworkModel3D(object):
             self.layerList = list(set(network.LayerList)&set(self.viewLayers))
             self.layerCount = len (self.layerList)
 
-        self.vertexLocations = network.vertexLocations
+        self.vertexLocations = edgeData['a_position']
         self.networkLayers = network.networkLayers
 
         self.NormalizedBoundingBox = network.NormalizedBoundingBox

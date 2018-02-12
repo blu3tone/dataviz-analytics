@@ -176,6 +176,10 @@ class _edge(object):
         ap1.edges.append((ap2,self))
         ap2.edges.append((ap1,self))
         self.count={}
+        self.movementCountWindow={}
+        self.movementCountMemo=None
+        self.movementClientsWindow={}
+        self.movementClientsMemo=None
         WAPGraph.setdefault(ap1,[]).append((ap2, self))
         WAPGraph.setdefault(ap2,[]).append((ap1, self))
         
@@ -204,12 +208,28 @@ class _edge(object):
         return count/clients
 
     def movementClients(self, **kwargs):
-        return len(self.countSubset(**kwargs).keys())
-  
+        if (self.movementClientsMemo==None or
+            kwargs.keys() != self.movementClientsWindow.keys() or
+            any([kwargs[k] != self.movementClientsWindow[k] for k in kwargs])):
+
+            self.movementClientsWindow=kwargs
+            clients=kwargs.pop('clients', self.count.keys())
+            self.movementClientsMemo = len([client for client in clients
+                                              if len(self.clientMovementTimes(client, **kwargs)) > 0]) 
+        
+        return self.movementClientsMemo        
+
     def movementCount(self, **kwargs):
-        clients=kwargs.pop('clients', self.count.keys())
-  
-        return sum([len(self.clientMovementTimes(client, **kwargs)) for client in clients]) 
+
+        if (self.movementCountMemo==None or
+            kwargs.keys() != self.movementCountWindow.keys() or
+            any([kwargs[k] != self.movementCountWindow[k] for k in kwargs])):
+
+            self.movementCountWindow=kwargs
+            clients=kwargs.pop('clients', self.count.keys())
+            self.movementCountMemo = sum([len(self.clientMovementTimes(client, **kwargs)) for client in clients]) 
+        
+        return self.movementCountMemo
     
     def inTimeWindow(self, **kwargs):
         return (len(self.countSubset(**kwargs)) > 0)
@@ -530,7 +550,7 @@ class _client(object):
                         edge(ap,nap, self, eventTime)
                 
             
-            if duration < 2*3600:
+            if True:    #  duration < 2*3600:
                 #duration = min(duration,2*3600)
                 
                 # Events in the log file are read in reverse time order.  Thus

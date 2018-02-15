@@ -1,4 +1,4 @@
-
+from __future__ import division
 import json
 import itertools
 import operator
@@ -47,7 +47,7 @@ class EndPoint(object):
             kwargs = self.layer.window
         
         # Override the Node Capacity with the capacity of the underlying  edge
-        return self.edge.movementClients(**kwargs)
+        return self.edge.movementClientCount(**kwargs)
         
         
     def __getattr__(self, name):
@@ -117,7 +117,7 @@ class Node(object):
         if len(self.edges) == 0: 
             return 0
         else:
-            return max((e.movementClients(**kwargs) for n,e in self.edges))
+            return max((e.movementClientCount(**kwargs) for n,e in self.edges))
         
 
         
@@ -191,34 +191,38 @@ class Network(object):
         self.layerCount=0
         self.LayerList=[]
         self.networkLayers=[]
+        self.maxWt=None
              
         if layers==[]:
-            log=ReadMerakiLogs()
-            layers.append(('WiFi', WAPGraph, {}))
+          
+            
+            log=ReadMerakiLogs()            
+            
+            #window= dict(days=[0,1,2,3,4], hours=[7,8,9, 16,17,18])
+            #Commute = log.subGraph(**window)
+            #layers.append(('Commute', Commute,window))
         
-            window= dict(days=[0,1,2,3,4], hours=[7,8,9])
-            morningCommute = log.subGraph(**window)
-            layers.append(('MorningCommute', morningCommute,window))
-        
-            window = dict(days=[0,1,2,3,4], hours=[11,12,13])             
-            lunchBreak=log.subGraph(**window)
-            layers.append(('LunchBreak', lunchBreak, window))
+            #window = dict(days=[0,1,2,3,4], hours=[11,12,13])             
+            #lunchBreak=log.subGraph(**window)
+            #layers.append(('LunchBreak', lunchBreak, window))
                          
-            window = dict(days=[0,1,2,3,4], hours=[16,17,18])             
-            afternoonCommute=log.subGraph(**window)
-            layers.append(('AfternoonCommute', afternoonCommute, window))
+            ##window = dict(days=[0,1,2,3,4], hours=[16,17,18])             
+            ##afternoonCommute=log.subGraph(**window)
+            ##layers.append(('AfternoonCommute', afternoonCommute, window))
 
-            window = dict(days=range(5), hours=range(7) + range(19,24))
-            nights=log.subGraph(**window)
-            layers.append(('WeekdayNights', nights, window))            
+            #window = dict(days=range(5), hours=range(7) + range(19,24))
+            #nights=log.subGraph(**window)
+            #layers.append(('WeekdayNights', nights, window))            
             
-            window = dict(hours=range(7,18), days=[5,6])
-            weekend=log.subGraph(**window)
-            layers.append(('Weekend', weekend, window))            
+            #window = dict(hours=range(7,18), days=[5,6])
+            #weekend=log.subGraph(**window)
+            #layers.append(('Weekend', weekend, window))            
             
-            window = dict(days=[5,6], hours=range(6) + range(19,24))
-            weekendNights=log.subGraph(**window)
-            layers.append(('WeekendNights', weekendNights, window))                      
+            #window = dict(days=[5,6], hours=range(6) + range(19,24))
+            #weekendNights=log.subGraph(**window)
+            #layers.append(('WeekendNights', weekendNights, window))                      
+
+            layers.append(('WiFi', WAPGraph, {}))
         
         for layerName, graph, window  in layers:
             """
@@ -234,14 +238,10 @@ class Network(object):
         self.NormalizeCoords()
         
         self.networkLayers=[n.layerIndex for n in endPointList]
-        
-       
-        
+
         print(self.bbox)
  
         print ("network created")
-        
-        
         
         
     def NormalizeCoords(self):
@@ -253,7 +253,7 @@ class Network(object):
         maxX,maxY = orthographicTransform(maxLat, maxLong, self.centLat, self.centLong)
         minX,minY = orthographicTransform(minLat, minLong, self.centLat, self.centLong)
 
-        self.scale = max([maxX - minX, maxY - minY]) / 2.0        
+        self.scale = max([maxX - minX, maxY - minY]) / 2.2        
 
         self.NormalizedBoundingBox = [a/self.scale for a in [minX,minY,maxX,maxY]]
 
@@ -264,6 +264,11 @@ class Network(object):
         self.endPointLocations = [[0,0,0]] * len(endPointList)
         self.vertexLocations = []
         idx=0
+        
+        wts = [n.clientCount() for n in endPointList]
+        self.zScale= max(wts)
+        
+       
         for n in endPointList:
             if n.location:
                 lat, lng = n.location
@@ -276,16 +281,21 @@ class Network(object):
             x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
             
             #Scale to fit within a 1x1 cube for OpenGL 
-            n.coords = [x/self.scale, y/self.scale, n.layerIndex]
+            n.coords = [x/self.scale, y/self.scale, n.layerOffset + wts[idx]/self.zScale]
             
             n.idx=idx
-            self.endPointLocations[n.idx] = n.coords
+            self.endPointLocations[idx] = n.coords
             idx+=1
 
-            self.vertexLocations.append((n.coords[0], n.coords[1], n.layerOffset))
+            self.vertexLocations.append(n.coords)
         
         idx=0
         self.nodeLocations = [[0,0,0]] * len(NodeList)    
+        
+        wts = [n.clientCount() for n in NodeList]
+        
+        assert max(wts) == self.zScale
+        
         for n in NodeList:
             if n.location:
                 lat, lng = n.location
@@ -298,14 +308,12 @@ class Network(object):
             x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
             
             #Scale to fit within a 1x1 cube for OpenGL 
-            n.coords = [x/self.scale, y/self.scale, n.layerOffset]
-            
-            n.idx=idx
-            self.nodeLocations[n.idx] = n.coords
+            n.coords = [x/self.scale, y/self.scale, n.layerOffset + wts[idx]/self.zScale]
+           
+            self.nodeLocations[idx] = n.coords
             idx+=1
 
-     
-
+ 
     def BoundingBox(self):
         # Find a bounding box for all nodes in all layers
         nodeLocations = [n.location for n in NodeList if n.location != None]
@@ -317,10 +325,7 @@ class Network(object):
 
         return (minLat, minLong, maxLat, maxLong)
 
-    def MinLength(self):
-        return min(lyr.MinLength()
-                   for lyr in self.LayersDict.values() if lyr.MinLength > 0)
-
+    
     def ClientsAndServers(self, obj):
         selectedEdges = set()
 
@@ -332,8 +337,25 @@ class Network(object):
             selectedEdges = set(e for nap, e in obj.edges)
 
         return selectedEdges
-
-
+    
+    def updateZCoordinates(self):
+        wts = [n.clientCount() for n in endPointList]
+        
+        idx=0
+        for n in endPointList:
+            n.coords[2] = n.layerOffset + wts[idx]/self.zScale
+            self.endPointLocations[n.idx] = n.coords
+            self.vertexLocations[idx]= n.coords    
+            idx+=1
+                
+        wts = [n.clientCount() for n in NodeList]
+        
+        idx=0
+        for n in NodeList:
+            n.coords[2] = n.layerOffset + wts[idx]/self.zScale
+            self.nodeLocations[idx] = n.coords
+            idx+=1
+            
  
 def __test():
 

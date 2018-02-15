@@ -1,5 +1,5 @@
 
-from __future__ import print_function
+from __future__ import print_function, division
 
 import json
 import string
@@ -8,12 +8,13 @@ import time
 from datetime import datetime, timedelta
 from pytz import timezone,utc
 import itertools
+import numpy as np
+
 import os
 from collections import Counter
 import  re
 re_digits= re.compile(r'(\d+)')
 from APGroupGraph import APNetwork, PrintAPNClientCountDistribution
-
 
 def embedded_numbers(s):
     pieces=re_digits.split(s)
@@ -133,7 +134,7 @@ def printClientGraph(**kwargs):
     
     for n1 in sorted(WAPGraph, key=lambda x: x.index):
         print("{:>2}:".format(n1.index), end=' ')
-        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementClients(**kwargs)) 
+        print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5d}".format(n2.index,e.movementClientCount(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
  
 def printCountToClientRatioGraph(**kwargs): 
@@ -150,6 +151,67 @@ def printCountToClientRatioGraph(**kwargs):
         print("{:>2}:".format(n1.index), end=' ')
         print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.CountToClientRatio(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
+
+
+
+def animationSequence(edges, **kwargs):
+    
+    hours= kwargs.pop('hours',[7,8,9,16,17,18])
+    days=kwargs.pop('days',[0,1,2,3,4,5,6])
+    period=kwargs.pop('step', 'days')
+    
+
+    if 'start' in kwargs:
+        start=kwargs.pop('start')
+    else:
+        start = min(itertools.chain.from_iterable((min(edge.count.values()) for edge in edges)))
+        
+    if 'end' in kwargs:
+        end=kwargs.pop('end')
+    else:
+        end = max(itertools.chain.from_iterable((max(edge.count.values()) for edge in edges)))
+    
+    startDay,startHour = time2DayAndHour(start)
+    endDay,endHour=time2DayAndHour(end)
+
+    if period == 'hours':
+        start = startHour*3600
+        end = endHour*3600
+        periods = endHour-startHour
+        periodSize=3600
+    elif period == 'days':
+        start = startDay*24*3600
+        end = endDay*24*3600
+        periods = endDay-startDay
+        periodSize=24*3600
+    elif period == 'weeks':
+        start = (startDay-dayOfWeek(startDay))*24*3600  # Start and end on a Monday
+        end = (endDay-dayOfWeek(endDay))*24*3600
+        periods = (end-start)//3600//24//7              # number of weeks
+        periodSize=3600*24*7                            # Seconds in a week
+        
+    periodCount = min(periods,31) 
+    
+    window = dict(days=days, hours=hours, start=start, end=end, step=periodSize, binCount=periodCount)
+
+    ne = len(edges)
+
+    counts = np.zeros((periodCount,ne),dtype=np.float32)
+
+    print("Analysis for period {} throough {} in {} periods ".format(evtime2String(start),
+                                                                     evtime2String(end),periods))
+
+    edgeIdx=0
+    for edge in edges:
+        counts[:,edgeIdx] = edge.movementCounts(**window)    
+        edgeIdx+=1
+            
+    maxCount = np.max(counts)
+    zCoords= counts/maxCount
+    
+    return zCoords
+
+
 
 edgeDict = {} 
            
@@ -193,8 +255,24 @@ class _edge(object):
     def clientMovementTimes(self, client, **kwargs):
         return [eventTime for  eventTime in self.count[client] 
                         if eventTimeInTimeWindow(eventTime, **kwargs) ] 
-                
+
+    def movementCounts(self, **kwargs):
+        '''
+        return an array indexed by time interval that contains the count of clients
+        that moved in that time interval
+        '''
+        start = kwargs['start']
+        step = kwargs.pop('step')
+        bins = kwargs.pop('binCount')
         
+        slotSet = [set() for __ in range(bins)]
+        
+        for client in self.count:
+            for idx in [(int(et-start)//step) for et in self.clientMovementTimes(client,**kwargs)]:
+                slotSet[idx].add(client)
+                
+        return [len(slot) for slot in slotSet]
+            
     def countSubset(self, **kwargs):
         
         clients = kwargs.pop('clients', self.count.keys())
@@ -204,18 +282,20 @@ class _edge(object):
 
     def CountToClientRatio(self, **kwargs):
         count=self.movementCount(**kwargs)
-        clients=self.movementClients(**kwargs) 
+        clients=self.movementClientCount(**kwargs) 
         return count/clients
 
-    def movementClients(self, **kwargs):
+    def movementClientCount(self, **kwargs):
         if (self.movementClientsMemo==None or
             kwargs.keys() != self.movementClientsWindow.keys() or
             any([kwargs[k] != self.movementClientsWindow[k] for k in kwargs])):
 
             self.movementClientsWindow=kwargs
             clients=kwargs.pop('clients', self.count.keys())
-            self.movementClientsMemo = len([client for client in clients
-                                              if len(self.clientMovementTimes(client, **kwargs)) > 0]) 
+            
+            activeClients = dict((client, self.clientMovementTimes(client, **kwargs)) for client in clients)
+            
+            self.movementClientsMemo = len([c  for c,times in activeClients.items() if len(times) > 0]) 
         
         return self.movementClientsMemo        
 
@@ -650,7 +730,7 @@ class eventLog(object):
     def __init__(self, filenames=[]): 
                  
         
-        filenames= ['allEvents4.json']
+        filenames= ['allEvents0.json']
         
         if filenames ==[]:
             filenames=[ 'allEvents0.json', 
@@ -957,6 +1037,9 @@ def __test():
     print("\n\nAccess Points")
     for ap in _wap.instances:
         print("{:>4d}  {:>16d}   {:<30}".format(ap.index, ap.ap_id, ap.name))
+        
+        
+    zCoords=animationSequence(edgeDict.values(), hours=[7,8,9,16,17,18], days=[0,1,2,3,4,5,6], period='days')
     
     printMovementGraph()
 

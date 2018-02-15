@@ -16,9 +16,11 @@ import cProfile
 import pstats
 
 from vispy import gloo, app
-from vispy.gloo import set_viewport, set_state, clear
+from vispy.gloo import set_viewport, set_state, clear, read_pixels
 from vispy.util.transforms import frustum, translate, rotate
 from vispy.util.keys import CONTROL
+
+from PIL import Image
 
 import textProgram as txt
 from network import Network
@@ -27,9 +29,9 @@ import picker
 from undo import UndoBuffer
 
 #from networkVertex import Vertex, vertices
-from vertexbuffer import vertexBufferObj, nodeLayerIndices, edgeIndices
+from vertexbuffer import vertexBufferObj, nodeLayerIndices, edgeIndices, colorSelect
 from streetmap import StreetModel
-
+from logreader import animationSequence
 
 vert = """
 #version 120
@@ -374,10 +376,15 @@ class Canvas(app.Canvas):
         # Initialize the canvas for real
         u_antialias = 1
 
+
+        self.hourAnimator=0
+        
         self.parent = kwargs['parent']
 
         self.model = model = kwargs.pop('model')
 
+        self.network = model.network
+        
         app.Canvas.__init__(self, keys='interactive', **kwargs)
         self.size = 800, 778
         self.position = 50, 50
@@ -429,6 +436,8 @@ class Canvas(app.Canvas):
                                                             self.model.network.centLong, 
                                                             self.model.network.scale)
         self.streetVbo = gloo.VertexBuffer(self.streetVertices)
+        
+        self.layerList=self.model.network.LayerList
         
         layerdata = LoadPlanes(model.network)
         self.planeVbo = gloo.VertexBuffer(layerdata)
@@ -604,8 +613,8 @@ class Canvas(app.Canvas):
         model = rotate(90, (1, 0, 0))
 
         self.layerLabels = txt.textLabels(self, labels, coords,
-                                           font_size=32,  model=model,
-                                           anchor_x='left', anchor_y='bottom')
+                                           font_size=32,   billboard=True,
+                                           anchor_x='center', anchor_y='bottom')
 
     def loadNodeLabels(self, edges):
         """
@@ -621,7 +630,7 @@ class Canvas(app.Canvas):
         if not hasattr(self,'nodeLabels') or self.nodeLabels is None:
 
             self.nodeLabels = txt.textLabels(self, labels, coords,
-                                             font_size=5, billboard=True,
+                                             font_size=8, billboard=True,
                                              heightOffset=-0.005, model=model,
                                              anchor_x='right', anchor_y='center')
         else:
@@ -630,24 +639,23 @@ class Canvas(app.Canvas):
 
     def updatePickVertices(self):
         """
-        Transform the vertex locations to vec4 by looking up the layer
-        offset, and augmenting with a 1.0
+        Transform the vertex locations to vec4 by augmenting with 1
+        
+        
         """
-        # Create an array of Vec4s  by adding a 1 at the end
         coords = np.array(self.model.vertexLocations)
-        layerIndices = np.array(self.model.networkLayers)
-
         nl = len(coords)
-
+        layerIndices = np.array(self.model.networkLayers)
+       
         zCoords = np.array([self.layerZCoordinates[self.layerMap[int(i)] ]
-                            for i in layerIndices], dtype=np.float32)
-
+                        for i in layerIndices], dtype=np.float32)
+        
         zOffsets = np.add(coords[:,2],zCoords)
 
+        # Create an array of Vec4s  by adding a 1 at the end
         self.worldVertexPositions = np.hstack((coords[:, :-1],
-                                               zOffsets.reshape(nl, 1),
-                                               np.ones((nl, 1))))
-
+                                            zOffsets.reshape(nl, 1),
+                                            np.ones((nl, 1))))
 
     def on_initialize(self, event):
         set_state(clear_color='white', depth_test=True, blend=True,
@@ -873,14 +881,105 @@ class Canvas(app.Canvas):
 
     def GlFrameImage(self):
 
-        buffer = glReadPixels(0, 0, self.Width, self.Height, GL_RGB, GL_UNSIGNED_BYTE)
-
-        # Use PIL to convert raw RGB buffer and flip the right way up
-        image = Image.fromstring(mode="RGB", size=(self.Width, self.Height), data=buffer)
-        image = image.transpose(Image.FLIP_TOP_BOTTOM)
-
+        buffer = read_pixels()
+        
+        image = Image.fromarray(buffer, mode="RGBA")
+        
         return image
 
+    def updateWindow(self,**kwargs):
+        layers = kwargs.pop('layers', [self.layerList[-1]])
+        
+        for l in layers:
+            l.window = kwargs
+        
+        self.network.updateZCoordinates()
+        
+        data=vertexBufferObj(self.network.endPointList)
+   
+        self.model.edgeData['a_position'] = self.model.vertexLocations = data['a_position']      
+        self.model.edgeData['a_fg_color'] = data['a_fg_color']
+        
+
+        self.model.edgeEndPointVbo = gloo.VertexBuffer(self.model.edgeData) #  self.model.edgeData)
+        vbo = gloo.VertexBuffer(self.model.edgeData)
+        self.program_e.bind(vbo)
+        self.updatePickVertices()
+        self.on_draw()
+
+        #self.app.process_events()
+        self.swap_buffers()
+ 
+
+    def clientCountAnimation(self):
+        
+        zcoords = animationSequence(self.network.edgeList, hours=range(24), 
+                                    days=range(7), period='days')
+        
+        self.highlightIndex=None
+        self.highlight=None
+        self.highlighted=None
+     
+        
+        for frame in range(len(zcoords[:,0])):
+            
+            markers={}
+            print ("Frame {}".format(frame))
+            edgeIdx=0
+            for edge in self.network.edgeList:
+                for nidx in edge.points:
+                    self.model.edgeData['a_position'][nidx][2]= zcoords[frame,edgeIdx]
+                for nidx in edge.nodepoints:
+                    markers[nidx] = max(markers.get(nidx,0), zcoords[frame,edgeIdx])
+
+                edgeIdx+=1    
+
+            for nidx in markers:
+                self.model.nodedata['a_position'][nidx][2]= markers[nidx]    
+    
+            self.model.vertexLocations = self.model.edgeData['a_position']
+ 
+            weights = np.log(self.model.edgeData['a_position'][:,2] +0.01)
+            minWt=-4
+            self.model.edgeData['a_fg_color'] = np.array([colorSelect(1-wt/minWt) for wt in (weights)], dtype=(np.float32,4))
+                  
+            vbo = gloo.VertexBuffer(self.model.edgeData)
+            self.program_e.bind(vbo)
+            self.highlight_e.bind(vbo)
+            
+            vbo2 = gloo.VertexBuffer(self.model.nodedata)
+            self.program.bind(vbo2)
+            
+            self.updatePickVertices()
+            self.on_draw()
+            self.swap_buffers()  
+            
+            img = self.GlFrameImage()
+            filename = "/tmp/dg%04d.png" % (frame)
+            img.save(filename)            
+            
+        
+ 
+    def dailyGrind(self):
+        for hour in range(7,11):
+            print("Hour {}".format(hour))
+            
+            self.updateWindow(hours=[hour])
+            
+            
+            #img = self.GlFrameImage()
+            #filename = "/tmp/dg%04d.png" % (frame)
+            #img.save(filename)
+        
+    def nextHour(self):
+        print("Hour {}".format(self.hourAnimator))
+        self.updateWindow(hours=[self.hourAnimator])
+        
+        self.hourAnimator+=1
+        self.hourAnimator%=24
+        
+        self.app.swap_buffers()
+        
 
     def OnAnimate(self):
 
@@ -889,7 +988,7 @@ class Canvas(app.Canvas):
                 setattr(self,attr,val)
 
             self.updateView(Animate = True)
-            self.OnDraw()
+            self.on_draw()
 
             img = self.GlFrameImage()
             filename = "/tmp/nm%04d.png" % (frame)
@@ -1044,7 +1143,7 @@ class Canvas(app.Canvas):
         self.vFocus = self.wFocus.dot(self.view)
         self.updateView()
 
-    def on_draw(self, event):
+    def on_draw(self, event=None):
 
         # pr = cProfile.Profile()
         # pr.enable()
@@ -1159,6 +1258,13 @@ class Canvas(app.Canvas):
             print("zRatio: ", self.zoomRatio)
             print("wFocus: ", self.wFocus)
             print("vFocus: ", self.vFocus)
+
+        elif (event.text == 'G'):
+            print("Client Count Animation")
+            self.clientCountAnimation()
+
+        elif (event.text == 'H'):
+            self.nextHour()
 
         else:
             print("Key Press", event.key)
@@ -1604,11 +1710,11 @@ class NetworkModel3D(object):
         edgeVertices = kwargs.pop('edgeVertices')
         self.viewLayers = kwargs.pop('viewLayers', None)
 
-        data = vertexBufferObj(vertices)
-        self.vbo = gloo.VertexBuffer(data)
+        self.nodedata = vertexBufferObj(vertices)
+        self.vbo = gloo.VertexBuffer(self.nodedata)
 
-        edgeData = vertexBufferObj(edgeVertices)
-        self.edgeEndPointVbo = gloo.VertexBuffer(edgeData)
+        self.edgeData = vertexBufferObj(edgeVertices)
+        self.edgeEndPointVbo = gloo.VertexBuffer(self.edgeData)
 
         self.markers = np.array(nodeLayerIndices(network.nodeList),
                            dtype=np.uint32)
@@ -1626,7 +1732,7 @@ class NetworkModel3D(object):
             self.layerList = list(set(network.LayerList)&set(self.viewLayers))
             self.layerCount = len (self.layerList)
 
-        self.vertexLocations = edgeData['a_position']
+        self.vertexLocations = self.edgeData['a_position']
         self.networkLayers = network.networkLayers
 
         self.NormalizedBoundingBox = network.NormalizedBoundingBox
@@ -1649,7 +1755,7 @@ class Panel3D(wx.Panel):
         self.canvas = Canvas(app="wx", parent=self, model=self.model, position=(0,0))
 
         self.Bind(wx.EVT_SIZE, self.OnSize)
-
+        
         self.canvas.native.Show()
 
     def OnSize(self, event):

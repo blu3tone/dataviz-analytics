@@ -3,6 +3,7 @@ import json
 import itertools
 import operator
 from math import sqrt, sin, cos, pi
+import numpy as np
 
 from streetmap import orthographicTransform
 
@@ -265,10 +266,10 @@ class Network(object):
         self.vertexLocations = []
         idx=0
         
-        wts = [n.clientCount() for n in endPointList]
-        self.zScale= max(wts)
-        
-       
+        wts = np.array([n.clientCount() for n in endPointList], dtype = np.float32)
+        self.zScale= np.max(wts)
+        self.zEdgeAdjust = wts / self.zScale  
+ 
         for n in endPointList:
             if n.location:
                 lat, lng = n.location
@@ -281,7 +282,7 @@ class Network(object):
             x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
             
             #Scale to fit within a 1x1 cube for OpenGL 
-            n.coords = [x/self.scale, y/self.scale, n.layerOffset + wts[idx]/self.zScale]
+            n.coords = [x/self.scale, y/self.scale, wts[idx]/self.zScale]
             
             n.idx=idx
             self.endPointLocations[idx] = n.coords
@@ -292,9 +293,10 @@ class Network(object):
         idx=0
         self.nodeLocations = [[0,0,0]] * len(NodeList)    
         
-        wts = [n.clientCount() for n in NodeList]
+        wts =np.array([n.clientCount() for n in NodeList], dtype=np.float32)
+        assert np.max(wts) == self.zScale
+        self.zNodeAdjust = wts / self.zScale        
         
-        assert max(wts) == self.zScale
         
         for n in NodeList:
             if n.location:
@@ -308,11 +310,12 @@ class Network(object):
             x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
             
             #Scale to fit within a 1x1 cube for OpenGL 
-            n.coords = [x/self.scale, y/self.scale, n.layerOffset + wts[idx]/self.zScale]
+            n.coords = [x/self.scale, y/self.scale, wts[idx]/self.zScale]
            
             self.nodeLocations[idx] = n.coords
             idx+=1
 
+  
  
     def BoundingBox(self):
         # Find a bounding box for all nodes in all layers
@@ -339,20 +342,25 @@ class Network(object):
         return selectedEdges
     
     def updateZCoordinates(self):
-        wts = [n.clientCount() for n in endPointList]
+        # Change the node and edgepoint z coordinate information to
+        # track the result of the n.clientCount calculation
         
+        # TBD this should be changed to support time filtering
+        
+        wts = [n.clientCount() for n in endPointList]
         idx=0
+        self.zEdgeAdjust=np.array(wts, dtype=np.float32)
         for n in endPointList:
-            n.coords[2] = n.layerOffset + wts[idx]/self.zScale
+            n.coords[2] = wts[idx]/self.zScale
             self.endPointLocations[n.idx] = n.coords
             self.vertexLocations[idx]= n.coords    
             idx+=1
                 
         wts = [n.clientCount() for n in NodeList]
-        
+        self.zNodeAdjust=np.array(wts, dtype=np.float32)
         idx=0
         for n in NodeList:
-            n.coords[2] = n.layerOffset + wts[idx]/self.zScale
+            n.coords[2] = wts[idx]/self.zScale
             self.nodeLocations[idx] = n.coords
             idx+=1
             

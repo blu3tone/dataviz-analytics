@@ -175,18 +175,20 @@ def animationSequence(edges, **kwargs):
     endDay,endHour=time2DayAndHour(end)
 
     if period == 'hours':
-        start = startHour*3600
-        end = endHour*3600
-        periods = endHour-startHour
+        start = int(start - start%3600 + 0.01)
+        end = int(end - end%3600 +0.01)
+        periods = (end-start)//3600
         periodSize=3600
     elif period == 'days':
-        start = startDay*24*3600
-        end = endDay*24*3600
-        periods = endDay-startDay
+        start = int(start - start%3600 - (startHour%24)*3600 + 0.01)
+        end = int(end - end%3600 - (endHour%24)*3600 +0.01)
+        periods = int(end-start)//3600//24
         periodSize=24*3600
     elif period == 'weeks':
-        start = (startDay-dayOfWeek(startDay))*24*3600  # Start and end on a Monday
-        end = (endDay-dayOfWeek(endDay))*24*3600
+        start = int(start - start%3600 - dayOfWeek(start)*24*3600 
+                  -  (startHour%24)*3600 + 0.01)                    # Start and end on a Monday at 0h00
+        end = int(end - end%3600 - dayOfWeek(end)*24*3600
+                - (endHour%24)*3600 + 0.01 )
         periods = (end-start)//3600//24//7              # number of weeks
         periodSize=3600*24*7                            # Seconds in a week
         
@@ -209,7 +211,7 @@ def animationSequence(edges, **kwargs):
     maxCount = np.max(counts)
     zCoords= counts/maxCount
     
-    return zCoords
+    return zCoords, start, periodSize
 
 
 
@@ -268,8 +270,15 @@ class _edge(object):
         slotSet = [set() for __ in range(bins)]
         
         for client in self.count:
-            for idx in [(int(et-start)//step) for et in self.clientMovementTimes(client,**kwargs)]:
-                slotSet[idx].add(client)
+            _et=0
+            for et in sorted(self.clientMovementTimes(client,**kwargs)):
+                # For each edge client count ignore follow on events that 
+                # occur within 90 minutes of previous counted event
+                if et - _et > 5400:
+                    idx = int((et-start)//step)
+                    uniqueIdx = int(et//3600%24)
+                    slotSet[idx].add((client,uniqueIdx))
+                    _et=et
                 
         return [len(slot) for slot in slotSet]
             

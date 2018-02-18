@@ -48,6 +48,8 @@ def streetBufferObj(vertices):
                                   ('a_fg_color', np.float32, 4),
                                   ('a_bg_color', np.float32, 4),
                                   ('a_size', np.float32, 1),
+                                  ('a_zAdjust', np.float32, 1),
+                                  ('a_colorAdjust', np.float32, 1),
                                   ('a_linewidth', np.float32, 1),
                                   ])
 

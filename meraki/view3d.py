@@ -31,7 +31,7 @@ from undo import UndoBuffer
 #from networkVertex import Vertex, vertices
 from vertexbuffer import vertexBufferObj, nodeLayerIndices, edgeIndices, colorSelect
 from streetmap import StreetModel
-from logreader import animationSequence
+from logreader import animationSequence, evtime2String
 
 vert = """
 #version 120
@@ -57,6 +57,8 @@ attribute vec4  a_bg_color;
 attribute float a_linewidth;
 attribute float a_size;
 attribute float a_layer;
+attribute float a_zAdjust;
+attribute float a_colorAdjust;
 
 // Varyings
 // ------------------------------------
@@ -94,7 +96,7 @@ void main (void) {
           v_bg_color  = u_bg_color;
          }
 
-    float ht = z_coord(lyridx, a_position.z);
+    float ht = z_coord(lyridx, a_position.z+ a_zAdjust);
 
     gl_Position = u_projection * u_view * u_model *
                         vec4(a_position.x, a_position.y, ht, 1.0);
@@ -234,26 +236,176 @@ void main(){
     #return res
 
 
-#def SelectVerticals(edges):
-    #NodeEdges = {}  # Key is Node, value is NodeLayer
+def SelectVerticals(edges):
+    NodeEdges = {}  # Key is Node, value is NodeLayer
 
-    #for n, nl in list(set((nl.node, nl) for e in edges for nl in e.points)):
-        #NodeEdges.setdefault(n, []).append(nl)
+    for n, nl in list(set((nl.node, nl) for e in edges for nl in e.points)):
+        NodeEdges.setdefault(n, []).append(nl)
 
-    #res = []
-    #for n in NodeEdges:
-        #maxNodeLyr = max([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
-        #minNodeLyr = min([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
+    res = []
+    for n in NodeEdges:
+        maxNodeLyr = max([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
+        minNodeLyr = min([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
 
-        #if maxNodeLyr != minNodeLyr:
-            #res.append((maxNodeLyr[1], minNodeLyr[1]))
-    #return res
+        if maxNodeLyr != minNodeLyr:
+            res.append((maxNodeLyr[1], minNodeLyr[1]))
+    return res
 
 
-def SelectVertices(edges):
-    Nodes = list(set(itertools.chain(*[e.nodepoints for e in edges])))
-    pointArray = np.array(Nodes, dtype=(np.uint32, 1))
-    return pointArray
+
+class verticalsProgram(gloo.Program):
+    
+    def __init__(self, **kwargs):
+        ''' 
+        Create vertical lines between the plane and the node
+        Read the xyz location from the a_position array
+        For each x,y choose the maximum z
+        Create vertices at x,y,zmax and x,y,0
+        Create an index table that we will use to draw lines between these points
+    
+        '''
+        super(verticalsProgram, self).__init__(vert=vert, frag=fs)
+        
+        nodeData = kwargs.pop('nodeData')
+        nl = self.apCount = nodeData.shape[0]
+        
+        # Double up the vertices.  The second half has z values of zero,
+        # The first half has z values proportional to the attribute
+        
+        self.aData = np.zeros(2*nl, dtype=[('a_position', np.float32, 3),
+                                     ('a_layer', np.float32, 1),
+                                     ('a_fg_color', np.float32, 4),
+                                     ('a_bg_color', np.float32, 4),
+                                     ('a_size', np.float32, 1),
+                                     ('a_linewidth', np.float32, 1),
+                                     ('a_zAdjust', np.float32, 1),
+                                     ('a_colorAdjust', np.float32, 1)
+                                     ])
+        
+
+        #Double up node data
+        #Will overwrite the second block with vertices with z values > 0
+
+        nl = self.apCount = nodeData.shape[0]
+
+        self.aData = np.concatenate((nodeData,nodeData),axis=0)  
+        self.aData['a_position'][:,2]=0.
+        self.aData['a_zAdjust'][nl:]=0
+        
+          
+        #self['a_zAdjust'] = aData['a_zAdjust']
+        #self['a_zAdjust'][nl:] = np.zeros(nl,dtype=np.float32)
+        #self['a_colorAdjust'] = aData['a_colorAdjust']
+      
+        
+        vbo= gloo.VertexBuffer(self.aData)        
+        self.bind(vbo)
+        
+        self.canvas=kwargs.pop('canvas')
+        self.canvas.registerDependent(self)
+        self.parent=kwargs.pop('parent',None)
+        
+        if self.parent is not None:
+            self.parent.registerChild(self)
+        else:
+            self.root = self
+            
+        self.__dict__['children'] = []
+    
+        self.model = kwargs.pop('model', np.eye(4, dtype=np.float32))
+        
+        self['u_projection']= self.canvas.projection
+        self['u_view']= self.canvas.view
+        for lyr in range(32):
+            self['u_layerMap[%d]' % lyr] = lyr        
+
+        uniforms = {'u_size':1, 
+                    'u_offset':0,
+                    'u_color':(0.1,0.1,0.1, 0.3),
+                    'u_bg_color':(1.,1.,1., -0.3),
+                    'u_antialias':True
+                    }
+        
+        uniforms.update({k:v for k,v in kwargs.items() if k in uniforms})    
+        for k,v in uniforms.items(): self[k]=v
+        
+        
+        verticalEnds = [(x,x+nl) for x in range(nl)]
+        self.edges = np.array(verticalEnds, dtype=(np.uint32, 2))
+        self.Index = gloo.IndexBuffer(self.edges)
+        
+        self.selectIndex=None
+
+    def updateAttributes(self, nodeZPositions):
+        
+        self.aData['a_zAdjust'][:self.apCount] = nodeZPositions
+        #self['a_zAdjust'][:self.apCount] = nodeZPositions
+        # self['a_zAdjust'] = np.concatenate(nodeZPositions, np.zeros(self.apCount, dtype=np.float32))
+        vbo= gloo.VertexBuffer(self.aData)
+        self.bind(vbo)
+        
+    def select(self, nodeIndexArray):
+        
+        if len(nodeIndexArray):
+            verticalEnds = [(x,x+self.apCount) for x in nodeIndexArray]
+            self.selectIndex=gloo.IndexBuffer(verticalEnds)
+        else:
+            self.selectIndex=None
+        
+        return self.selectIndex
+
+    def unselect(self):
+        self.selectIndex=None
+
+        
+    def modelProduct(self):
+        """
+        Model matrix is the product of all model transformations from here
+        down to the root
+
+        The model must be recalculated if there is a change to the model on
+        any of the ancestors on the chain down to root
+        """
+        if self.parent is None:
+            return self._model
+        else:
+            return self._model.dot(self.parent.modelProduct())
+
+    @property
+    def height(self):
+        if self.parent is None:
+            return self.canvas.height
+        else:
+            return self.parent.height
+
+    def __getitem__(self, name):
+        if name == 'u_model':
+            return self.modelProduct()
+        else:
+            return super(verticalsProgram,self).__getitem__(name)
+
+    def updateChildModels(self):
+        self['u_model'] = self.modelProduct()
+        for child in self.children:
+            child.updateChildModels()
+
+    @property
+    def model(self):
+        return self._model
+
+    @model.setter
+    def model(self, value):
+        self._model = value
+        self.updateChildModels()
+        
+    def draw(self):
+        
+        if self.selectIndex:
+            super(verticalsProgram,self).draw('lines', self.selectIndex)
+        else:
+            super(verticalsProgram,self).draw('lines', self.Index)
+            
+            
 
 
 def LoadPlanes(network):
@@ -407,7 +559,6 @@ class Canvas(app.Canvas):
         self.selectedEdges = None
 
         self.selectedEdgesIndex = None
-        self.sVerticalsIndex = None
         self.highlightIndex = None
         self.selectedIndex = None
         self.selectedObject = None
@@ -425,7 +576,6 @@ class Canvas(app.Canvas):
         self.edgeColor = self.edgeColorDefault = (0.9, 0.6, 0.6, 1)
         self.trailColor = self.trailColorDefault = (0.6, 0.6, 0.9, 0.5)
         self.pointColor = self.pointColorDefault = (0.3, 0.3, 0.8, 1)
-        self.verticalColor = self.verticalColorDefault = (0.6, 0.6, 0.2, 0.4)
 
         self.pickEdgeCoords = None
 
@@ -529,6 +679,7 @@ class Canvas(app.Canvas):
 
         color = np.random.uniform(0.5, 1, (32, 3))
         colorTable = np.hstack((color, np.ones((32, 1))))
+        colorTable[0,:3] = (1,0.87,0.68)
         colorTable[:, 3] = 0.15
 
         for lyr in range(32):
@@ -553,7 +704,11 @@ class Canvas(app.Canvas):
 
         self.updateLayerSpacing(self.spacing)
         self.loadLayerLabels()
-        self.loadNodeLabels(self.model.edgeList)        
+        self.loadNodeLabels(self.model.edgeList) 
+        
+        print ("Adding verticals Program")
+        
+        self.verticals = verticalsProgram(canvas=self, nodeData=model.nodedata)
         
         self.updateView()
 
@@ -650,7 +805,7 @@ class Canvas(app.Canvas):
         zCoords = np.array([self.layerZCoordinates[self.layerMap[int(i)] ]
                         for i in layerIndices], dtype=np.float32)
         
-        zOffsets = np.add(coords[:,2],zCoords)
+        zOffsets = np.add(self.network.zEdgeAdjust,zCoords)
 
         # Create an array of Vec4s  by adding a 1 at the end
         self.worldVertexPositions = np.hstack((coords[:, :-1],
@@ -913,73 +1068,78 @@ class Canvas(app.Canvas):
 
     def clientCountAnimation(self):
         
-        zcoords = animationSequence(self.network.edgeList, hours=range(24), 
+        self.animateZcoords, self.frameStart, self.frameStep = animationSequence(self.network.edgeList, hours=range(24), 
                                     days=range(7), period='days')
         
+        self.maxFrame=len(self.animateZcoords[:,0]) - 1
+        self.frame=0
+        self._showDay(self.frame)
+            
+    def nextDay(self):
+        self.frame += 1
+        if self.frame > self.maxFrame: self.frame = self.maxFrame
+        self._showDay(self.frame)      
+        
+    def prevDay(self):
+        self.frame -= 1
+        if self.frame < 0: self.frame = 0
+        self._showDay(self.frame)              
+        
+    def _showDay(self,frame):
         self.highlightIndex=None
         self.highlight=None
         self.highlighted=None
-     
-        
-        for frame in range(len(zcoords[:,0])):
-            
-            markers={}
-            print ("Frame {}".format(frame))
-            edgeIdx=0
-            for edge in self.network.edgeList:
-                for nidx in edge.points:
-                    self.model.edgeData['a_position'][nidx][2]= zcoords[frame,edgeIdx]
-                for nidx in edge.nodepoints:
-                    markers[nidx] = max(markers.get(nidx,0), zcoords[frame,edgeIdx])
-
-                edgeIdx+=1    
-
-            for nidx in markers:
-                self.model.nodedata['a_position'][nidx][2]= markers[nidx]    
     
-            self.model.vertexLocations = self.model.edgeData['a_position']
- 
-            weights = np.log(self.model.edgeData['a_position'][:,2] +0.01)
-            minWt=-4
-            self.model.edgeData['a_fg_color'] = np.array([colorSelect(1-wt/minWt) for wt in (weights)], dtype=(np.float32,4))
-                  
-            vbo = gloo.VertexBuffer(self.model.edgeData)
-            self.program_e.bind(vbo)
-            self.highlight_e.bind(vbo)
-            
-            vbo2 = gloo.VertexBuffer(self.model.nodedata)
-            self.program.bind(vbo2)
-            
-            self.updatePickVertices()
-            self.on_draw()
-            self.swap_buffers()  
-            
-            img = self.GlFrameImage()
-            filename = "/tmp/dg%04d.png" % (frame)
-            img.save(filename)            
-            
+        self.frameTime = self.frameStart + frame*self.frameStep
+    
+        frameTimeString = evtime2String(self.frameTime)
+        self.layerLabels.texts=[frameTimeString]
+    
+      
+        markers={}
+        print ("Frame {} {}".format(frame, frameTimeString))
+        edgeIdx=0
+        for edge in self.network.edgeList:
+            for nidx in edge.points:
+                self.model.edgeData['a_zAdjust'][nidx]= self.animateZcoords[frame,edgeIdx]
+            for nidx in edge.nodepoints:
+                markers[nidx] = max(markers.get(nidx,0), self.animateZcoords[frame,edgeIdx])
+            edgeIdx+=1    
+
+        for nidx in markers:
+            self.model.nodedata['a_zAdjust'][nidx]= markers[nidx]    
+
+        self.network.zEdgeAdjust=self.model.edgeData['a_zAdjust']
+        self.network.zNodeAdjust=self.model.nodedata['a_zAdjust']
         
- 
-    def dailyGrind(self):
-        for hour in range(7,11):
-            print("Hour {}".format(hour))
-            
-            self.updateWindow(hours=[hour])
-            
-            
-            #img = self.GlFrameImage()
-            #filename = "/tmp/dg%04d.png" % (frame)
-            #img.save(filename)
+        self.verticals.updateAttributes(self.model.nodedata['a_zAdjust'])
+    
+        weights = np.log(self.model.edgeData['a_zAdjust'] +0.0001)
+        minWt=-7
+        self.model.edgeData['a_fg_color'] = np.array([colorSelect(1-wt/minWt) for wt in (weights)], dtype=(np.float32,4))
+    
+        vbo = gloo.VertexBuffer(self.model.edgeData)
+        self.program_e.bind(vbo)
+        self.highlight_e.bind(vbo)
+    
+        vbo2 = gloo.VertexBuffer(self.model.nodedata)
+        self.program.bind(vbo2)
+    
+        self.updatePickVertices()
+        self.on_draw()
+        self.swap_buffers()  
+    
+        img = self.GlFrameImage()
         
-    def nextHour(self):
-        print("Hour {}".format(self.hourAnimator))
-        self.updateWindow(hours=[self.hourAnimator])
+        img.load()  # needed for split()
+        background = Image.new('RGB', img.size, color=(255,255,255))
+        background.paste(img, mask=img.split()[3])  # 3 is the alpha channel        
         
-        self.hourAnimator+=1
-        self.hourAnimator%=24
+        filename = "/tmp/dg%04d.png" % (frame)
+        background.save(filename)   
         
-        self.app.swap_buffers()
         
+
 
     def OnAnimate(self):
 
@@ -1058,11 +1218,12 @@ class Canvas(app.Canvas):
             if hasattr(obj,'edgeId'):
                 edgeList = []
                 edgeList.append(obj.points)
-                pointList = list(obj.points)
+                pointList = list(obj.nodepoints)
                 selectedEdge = np.array(edgeList, dtype=(np.uint32, 2))
                 self.selectedIndex = gloo.IndexBuffer(selectedEdge)
                 selectedPoints = np.array(pointList, dtype=(np.uint32, 1))
                 self.selectedPointIndex = gloo.IndexBuffer(selectedPoints)
+                #self.verticals.select(selectedPoints)
 
             elif hasattr(obj, 'index'):
                 edgeList = []
@@ -1071,6 +1232,8 @@ class Canvas(app.Canvas):
                 pointList = [obj.index]
                 selectedPoints = np.array(pointList, dtype=(np.uint32, 1))
                 self.selectedPointIndex = gloo.IndexBuffer(selectedPoints)
+                #self.verticals.select(selectedPoints)
+                
                 
             if self.highlight != self.highlighted:
                 print(("Selector %s" % (self.highlight.name)))
@@ -1080,12 +1243,19 @@ class Canvas(app.Canvas):
         else:
             self.selectedIndex = None
             self.selectedPointIndex = None
+            self.verticals.unselect()
             
     def SetSelectionList(self, selectedEdges):
         self.undo.save(operation=self._SetSelectionList,
                        rState=(selectedEdges),
                        uState=(self.selectedEdges))
         self.selectedEdges = selectedEdges
+
+    def selectVertices(self,selectedEdges):
+        
+        points = list(set([n.index for edge in selectedEdges for n in edge.nodes]))
+        
+        return np.array(points,dtype=np.uint32)
 
     def _SetSelectionList(self, state):
 
@@ -1098,11 +1268,11 @@ class Canvas(app.Canvas):
             self.selectedEdgesIndex = self.workTrailIndex = None
 
         if selectedEdges:
-            #verticals = SelectVerticals(selectedEdges)
-            #self.sVerticalsIndex = gloo.IndexBuffer(verticals)
-
-            points = SelectVertices(selectedEdges )
+            
+            points = self.selectVertices(selectedEdges )
             self.sPointsIndex = gloo.IndexBuffer(points)
+
+            self.selectedVerticalsIndex = self.verticals.select(points)
 
             self.loadNodeLabels(selectedEdges)
 
@@ -1114,21 +1284,12 @@ class Canvas(app.Canvas):
             # Dim whatever's not selected by setting a to 0.1
             self.edgeColor = self.edgeColorDefault[:-1] + (0.1, )
             self.pointColor = self.pointColorDefault[:-1] + (0.1, )
-            self.verticalColor = self.verticalColorDefault[:-1] + (0.1,)
-
-            #self.activeLayers = list(set(e.layer.idx for e in selectedEdges))
-            #layerMap = dict(list(zip(self.activeLayers,
-                                #list(range(len(self.activeLayers))))))
-
-            #self.layerMap = [layerMap.get(k, -2)
-                             #for k in range(self.model.layerCount)]
+            
 
         else:
-            self.sVerticalsIndex = None
             self.edgeColor = self.edgeColorDefault
             self.pointColor = self.pointColorDefault
-            self.verticalColor = self.verticalColorDefault
-
+            
             self.activeLayers = list(range(self.model.layerCount))
             self.layerMap = list(range(32))
 
@@ -1154,6 +1315,8 @@ class Canvas(app.Canvas):
         self.program_b['u_size'] = 1
         self.program_b['u_color'] = self.baseColorDefault
         self.program_b.draw('lines', self.baseIndex)
+
+        self.verticals.draw()
 
         if self.selectedEdgesIndex:
             #self.program_e['u_color'] = self.edgeColorDefault
@@ -1263,8 +1426,11 @@ class Canvas(app.Canvas):
             print("Client Count Animation")
             self.clientCountAnimation()
 
-        elif (event.text == 'H'):
-            self.nextHour()
+        elif (event.text == 'N'):
+            self.nextDay()
+            
+        elif (event.text == 'P'):
+            self.prevDay()        
 
         else:
             print("Key Press", event.key)
@@ -1641,7 +1807,7 @@ class Canvas(app.Canvas):
                     # click with distance between
                     # mouse and selected item more than 20 pixels
                     selectedEdgeList = None
-                    self.SelectAndNotify(self.highlighted, selectedEdgeList)
+                    self.SelectAndNotify(None, selectedEdgeList)
 
                 else:
                     # End of left mouse drag operation

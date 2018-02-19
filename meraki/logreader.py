@@ -192,7 +192,7 @@ def animationSequence(edges, **kwargs):
         periods = (end-start)//3600//24//7              # number of weeks
         periodSize=3600*24*7                            # Seconds in a week
         
-    periodCount = min(periods,31) 
+    periodCount = min(periods,100) 
     
     window = dict(days=days, hours=hours, start=start, end=end, step=periodSize, binCount=periodCount)
 
@@ -739,10 +739,16 @@ class eventLog(object):
     def __init__(self, filenames=[]): 
                  
         
-        filenames= ['allEvents0.json']
+        filenames= ['allEvents-1.json',
+                    'allEvents-0.json',
+                    'allEvents0.json', 
+                    'allEvents1.json',
+                    'allEvents2.json']
         
         if filenames ==[]:
-            filenames=[ 'allEvents0.json', 
+            filenames=[ 'allEvents-1.json',
+                        'allEvents-0.json',
+                        'allEvents0.json', 
                         'allEvents1.json', 
                         'allEvents2.json', 
                         'allEvents3.json', 

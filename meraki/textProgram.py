@@ -139,9 +139,10 @@ class FontManager(object):
 ##############################################################################
 
 
-def text_to_vbo(texts, coords, font, anchor_x, anchor_y, lowres_size):
+def text_to_vbo(texts, coords, layers, font, anchor_x, anchor_y, lowres_size):
     """Convert text characters to VBO"""
     text_vtype = np.dtype([('a_position', 'f4', 3),
+                           ('a_layer', 'f4', 1),
                            ('a_anchor', 'f4', 3),
                            ('a_texcoord', 'f4', 3)])
 
@@ -177,6 +178,7 @@ def text_to_vbo(texts, coords, font, anchor_x, anchor_y, lowres_size):
         descender = hyDescender
 
         anchor = coords[idx]
+        layer = layers[idx]
 
         for ii, char in enumerate(text):
             glyph = font[char]
@@ -190,6 +192,7 @@ def text_to_vbo(texts, coords, font, anchor_x, anchor_y, lowres_size):
             texcoords = [[u0, v0, 0], [u0, v1, 0], [u1, v1, 0], [u1, v0, 0]]
             vi = wi + ii * 4
             vertices['a_position'][vi:vi+4] = position
+            vertices['a_layer'][vi:vi+4] = layer
             vertices['a_anchor'][vi:vi+4] = anchor
             vertices['a_texcoord'][vi:vi+4] = texcoords
             x_move = glyph['advance'] * ratio + kerning
@@ -262,28 +265,29 @@ class textLabels(Program):
 
         uniform float u_offset;
         uniform float u_heightOffset;
-        uniform int    u_layerMap[32];
+        uniform int   u_layerMap[32];
 
 
         attribute vec3 a_position;
         attribute vec3 a_anchor;
+        attribute float a_layer;
         attribute vec3 a_texcoord;
 
         varying vec2 v_texcoord;
         varying vec4 v_color;
 
         float z_coord(float pos_z) {
-            int z_idx = int(pos_z);
+            int z_idx = int(a_layer);
             int lyr = u_layerMap[z_idx];
 
-            float z = lyr*u_offset - 1.0 + u_heightOffset;
+            float z = lyr*u_offset - 1.0 + u_heightOffset + pos_z;
             return z;
         }
 
         void main(void) {
             float height = z_coord(a_anchor.z);
 
-            if (u_billboard == 1) {
+           if (u_billboard == 1) {
                  vec4 pos = (u_model * vec4(a_position.xy, 0, 0))
                              + (u_view * vec4(a_anchor.xy, height, 1));
                  gl_Position = u_projection * pos;
@@ -295,7 +299,7 @@ class textLabels(Program):
                  }
 
             v_texcoord = a_texcoord.xy;
-            int idx = int(a_anchor.z);
+            int idx = int(a_layer);
 
             if (u_layerMap[idx]  <= -1)
                  v_color = vec4(0,0,0,0);
@@ -420,7 +424,7 @@ class textLabels(Program):
         }
         """
 
-    def __init__(self, canvas, texts, coords, color='black', bold=False,
+    def __init__(self, canvas, texts, coords, layers, color='black', bold=False,
                  italic=False, face='OpenSans', font_size=12,
                  anchor_x='center', anchor_y='center',
                  font_manager=None, parent = None, **kwargs):
@@ -448,6 +452,7 @@ class textLabels(Program):
         self.color = color
         self.texts = texts
         self.coords = coords
+        self.layers = layers
         self.font_size = font_size
         self.textScale = font_size / 720
 
@@ -508,6 +513,30 @@ class textLabels(Program):
         for coord in cds:
             assert len(coord) == 3
         self._coords = cds
+        self._vertices = None
+
+    @property
+    def zCoords(self):
+        return list(np.array(self._coords[:,2]))
+
+    @zCoords.setter
+    def zCoords(self, zLoc):
+        assert len(zLoc) == len(self._coords)
+        
+        for i,v in enumerate(zLoc):
+            self._coords[i][2]=v
+        
+        self._vertices = None
+    
+    @property
+    def layers(self):
+        return self._coords
+    
+    @layers.setter
+    def layers(self,lyrs):
+        for lyr in lyrs:
+            assert lyr >=0 and lyr<8
+        self._layers = lyrs
         self._vertices = None
 
     @property
@@ -595,7 +624,7 @@ class textLabels(Program):
             # we delay creating vertices because it requires a context,
             # which may or may not exist when the object is initialized
             self.canvas.context.flush_commands()  # flush GLIR commands
-            self._vertices = text_to_vbo(self._texts, self._coords, self._font,
+            self._vertices = text_to_vbo(self._texts, self._coords, self._layers, self._font,
                                           self._anchors[0], self._anchors[1],
                                           self._font._lowres_size)
 

@@ -29,6 +29,8 @@ import picker
 from undo import UndoBuffer
 
 #from networkVertex import Vertex, vertices
+
+from graphprogram import verticalsProgram, GlProgram
 from vertexbuffer import vertexBufferObj, nodeLayerIndices, edgeIndices, colorSelect
 from streetmap import StreetModel
 from logreader import animationSequence, evtime2String
@@ -223,190 +225,6 @@ void main(){
 """
 
 
-#def Verticals(network):
-    #res = []
-    #for n in network.nodeList:
-
-        #maxNodeLyr = max([(nl.layer.idx, nl.vtx) for nl in n.nodeLayerList])
-        #minNodeLyr = min([(nl.layer.idx, nl.vtx) for nl in n.nodeLayerList])
-
-        #if maxNodeLyr != minNodeLyr:
-            #res.append((maxNodeLyr[1], minNodeLyr[1]))
-
-    #return res
-
-
-def SelectVerticals(edges):
-    NodeEdges = {}  # Key is Node, value is NodeLayer
-
-    for n, nl in list(set((nl.node, nl) for e in edges for nl in e.points)):
-        NodeEdges.setdefault(n, []).append(nl)
-
-    res = []
-    for n in NodeEdges:
-        maxNodeLyr = max([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
-        minNodeLyr = min([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
-
-        if maxNodeLyr != minNodeLyr:
-            res.append((maxNodeLyr[1], minNodeLyr[1]))
-    return res
-
-
-
-class verticalsProgram(gloo.Program):
-    
-    def __init__(self, **kwargs):
-        ''' 
-        Create vertical lines between the plane and the node
-        Read the xyz location from the a_position array
-        For each x,y choose the maximum z
-        Create vertices at x,y,zmax and x,y,0
-        Create an index table that we will use to draw lines between these points
-    
-        '''
-        super(verticalsProgram, self).__init__(vert=vert, frag=fs)
-        
-        nodeData = kwargs.pop('nodeData')
-        nl = self.apCount = nodeData.shape[0]
-        
-        # Double up the vertices.  The second half has z values of zero,
-        # The first half has z values proportional to the attribute
-        
-        self.aData = np.zeros(2*nl, dtype=[('a_position', np.float32, 3),
-                                     ('a_layer', np.float32, 1),
-                                     ('a_fg_color', np.float32, 4),
-                                     ('a_bg_color', np.float32, 4),
-                                     ('a_size', np.float32, 1),
-                                     ('a_linewidth', np.float32, 1),
-                                     ('a_zAdjust', np.float32, 1),
-                                     ('a_colorAdjust', np.float32, 1)
-                                     ])
-        
-
-        #Double up node data
-        #Will overwrite the second block with vertices with z values > 0
-
-        nl = self.apCount = nodeData.shape[0]
-
-        self.aData = np.concatenate((nodeData,nodeData),axis=0)  
-        self.aData['a_position'][:,2]=0.
-        self.aData['a_zAdjust'][nl:]=0
-        
-          
-        #self['a_zAdjust'] = aData['a_zAdjust']
-        #self['a_zAdjust'][nl:] = np.zeros(nl,dtype=np.float32)
-        #self['a_colorAdjust'] = aData['a_colorAdjust']
-      
-        
-        vbo= gloo.VertexBuffer(self.aData)        
-        self.bind(vbo)
-        
-        self.canvas=kwargs.pop('canvas')
-        self.canvas.registerDependent(self)
-        self.parent=kwargs.pop('parent',None)
-        
-        if self.parent is not None:
-            self.parent.registerChild(self)
-        else:
-            self.root = self
-            
-        self.__dict__['children'] = []
-    
-        self.model = kwargs.pop('model', np.eye(4, dtype=np.float32))
-        
-        self['u_projection']= self.canvas.projection
-        self['u_view']= self.canvas.view
-        for lyr in range(32):
-            self['u_layerMap[%d]' % lyr] = lyr        
-
-        uniforms = {'u_size':1, 
-                    'u_offset':0,
-                    'u_color':(0.1,0.1,0.1, 0.3),
-                    'u_bg_color':(1.,1.,1., -0.3),
-                    'u_antialias':True
-                    }
-        
-        uniforms.update({k:v for k,v in kwargs.items() if k in uniforms})    
-        for k,v in uniforms.items(): self[k]=v
-        
-        
-        verticalEnds = [(x,x+nl) for x in range(nl)]
-        self.edges = np.array(verticalEnds, dtype=(np.uint32, 2))
-        self.Index = gloo.IndexBuffer(self.edges)
-        
-        self.selectIndex=None
-
-    def updateAttributes(self, nodeZPositions):
-        
-        self.aData['a_zAdjust'][:self.apCount] = nodeZPositions
-        #self['a_zAdjust'][:self.apCount] = nodeZPositions
-        # self['a_zAdjust'] = np.concatenate(nodeZPositions, np.zeros(self.apCount, dtype=np.float32))
-        vbo= gloo.VertexBuffer(self.aData)
-        self.bind(vbo)
-        
-    def select(self, nodeIndexArray):
-        
-        if len(nodeIndexArray):
-            verticalEnds = [(x,x+self.apCount) for x in nodeIndexArray]
-            self.selectIndex=gloo.IndexBuffer(verticalEnds)
-        else:
-            self.selectIndex=None
-        
-        return self.selectIndex
-
-    def unselect(self):
-        self.selectIndex=None
-
-        
-    def modelProduct(self):
-        """
-        Model matrix is the product of all model transformations from here
-        down to the root
-
-        The model must be recalculated if there is a change to the model on
-        any of the ancestors on the chain down to root
-        """
-        if self.parent is None:
-            return self._model
-        else:
-            return self._model.dot(self.parent.modelProduct())
-
-    @property
-    def height(self):
-        if self.parent is None:
-            return self.canvas.height
-        else:
-            return self.parent.height
-
-    def __getitem__(self, name):
-        if name == 'u_model':
-            return self.modelProduct()
-        else:
-            return super(verticalsProgram,self).__getitem__(name)
-
-    def updateChildModels(self):
-        self['u_model'] = self.modelProduct()
-        for child in self.children:
-            child.updateChildModels()
-
-    @property
-    def model(self):
-        return self._model
-
-    @model.setter
-    def model(self, value):
-        self._model = value
-        self.updateChildModels()
-        
-    def draw(self):
-        
-        if self.selectIndex:
-            super(verticalsProgram,self).draw('lines', self.selectIndex)
-        else:
-            super(verticalsProgram,self).draw('lines', self.Index)
-            
-            
-
 
 def LoadPlanes(network):
     nl = network.layerCount
@@ -431,95 +249,6 @@ def LoadPlanes(network):
 
     return layerdata
 
-
-def LoadSelectedEdges(edgeList):
-
-    EdgeNodeList = [e.points for e in edgeList]
-    edges = np.array(EdgeNodeList, dtype=(np.uint32, 2))
-    
-    return edges
-
-
-def baseLayerEdges(network):
-    '''
-    Create a ghost image of the physical network
-    to provide context when viewing subset selections
-    '''
-    baseLayer = network.LayerList[0]
-    links = baseLayer.edgeIndices
-    edgeVertices = np.array(links, dtype=(np.uint32, 2))
-    return edgeVertices
-
-class GlProgram(gloo.Program):
-
-    def __init__(self, **kwargs):
-        self.parent = kwargs.pop('parent', None)
-        canvas = self.canvas = kwargs.pop('canvas')
-        self.heightOffset = kwargs.pop('heightOffset', 0.0)
-
-        super(GlProgram, self).__init__(**kwargs)
-
-        #  Register for View and Projection updates with the canvas
-        canvas.registerDependent(self)
-
-        self['u_view'] = canvas.view
-        self['u_projection'] = canvas.projection
-
-        #  A program is transformed by the chain of model matrices
-        #  from parent to the root.
-
-        self.__dict__['children'] = []
-
-        if self.parent is not None:
-            self.parent.registerChild(self)
-        else:
-            self.root = self
-
-        self.model = np.eye(4, dtype=np.float32)
-
-    def registerChild(self, child):
-        self.children.append(child)
-        child.root = self.root
-
-    def modelProduct(self):
-        """
-        Model matrix is the product of all model transformations from here
-        down to the root
-
-        The model must be recalculated if there is a change to the model on
-        any of the ancestors on the chain down to root
-        """
-        if self.parent is None:
-            return self._model
-        else:
-            return self._model.dot(self.parent.modelProduct())
-
-    @property
-    def height(self):
-        if self.parent is None:
-            return self.canvas.height
-        else:
-            return self.parent.height
-
-    def __getitem__(self, name):
-        if name == 'u_model':
-            return self.modelProduct()
-        else:
-            return super(GlProgram, self).__getitem__(name)
-
-    def updateChildModels(self):
-        self['u_model'] = self.modelProduct()
-        for child in self.children:
-            child.updateChildModels()
-
-    @property
-    def model(self):
-        return self._model
-
-    @model.setter
-    def model(self, value):
-        self._model = value
-        self.updateChildModels()
 
 
 class Canvas(app.Canvas):
@@ -704,11 +433,11 @@ class Canvas(app.Canvas):
 
         self.updateLayerSpacing(self.spacing)
         self.loadLayerLabels()
-        self.loadNodeLabels(self.model.edgeList) 
+        self.loadNodeLabels(self.model.nodeList) 
         
         print ("Adding verticals Program")
         
-        self.verticals = verticalsProgram(canvas=self, nodeData=model.nodedata)
+        self.verticals = verticalsProgram(canvas=self, nodeData=model.nodedata, parent=self.program)
         
         self.updateView()
 
@@ -763,34 +492,38 @@ class Canvas(app.Canvas):
         pos = self.model.NormalizedBoundingBox[:2]
 
         labels = [lyr.name for lyr in self.model.layerList]
-        coords = [(pos[0], pos[1], i) for i in range(len(labels))]
+        coords = [(pos[0], pos[1], 0) for i in range(len(labels))]
+        layers = [lyr.index for lyr in self.model.layerList]
 
         model = rotate(90, (1, 0, 0))
 
-        self.layerLabels = txt.textLabels(self, labels, coords,
+        self.layerLabels = txt.textLabels(self, labels, coords, layers,
                                            font_size=32,   billboard=True,
                                            anchor_x='center', anchor_y='bottom')
 
-    def loadNodeLabels(self, edges):
+    def loadNodeLabels(self, nodes, force=False):
         """
-        Text labels for listed edges
+        Text labels for listed nodes
         """
-        vertices = list(set([getattr(v,'node',v) for e in edges for v in e.edgeId]))
-
-        labels = [str(node.name) for node in vertices]
         
-        coords = [node.coords for node in vertices]
-        model = rotate(90, (0, 0, 1))
+        labels = [str(node.name) for node in nodes]
+        coords = [(node.coords[0], node.coords[1], 0) for node in nodes]
+        layers = [node.layerIndex for node in nodes]
         
-        if not hasattr(self,'nodeLabels') or self.nodeLabels is None:
-
-            self.nodeLabels = txt.textLabels(self, labels, coords,
+        if force or not hasattr(self,'nodeLabels') or self.nodeLabels is None:
+            model = rotate(90, (0, 0, 1))
+            self.nodeLabels = txt.textLabels(self, labels, coords, layers,
                                              font_size=8, billboard=True,
                                              heightOffset=-0.005, model=model,
                                              anchor_x='right', anchor_y='center')
         else:
             self.nodeLabels.texts = labels
             self.nodeLabels.coords = coords
+            self.nodeLabels.layers = layers
+            
+    def updateNodeLabelZCoordinates(self, zLocs):
+        pass
+        #self.nodeLabels.zCoords= zLocs
 
     def updatePickVertices(self):
         """
@@ -1112,7 +845,11 @@ class Canvas(app.Canvas):
         self.network.zEdgeAdjust=self.model.edgeData['a_zAdjust']
         self.network.zNodeAdjust=self.model.nodedata['a_zAdjust']
         
+        
         self.verticals.updateAttributes(self.model.nodedata['a_zAdjust'])
+        self.loadNodeLabels(self.model.nodeList)
+        
+        self.updateNodeLabelZCoordinates(self.model.nodedata['a_zAdjust'])
     
         weights = np.log(self.model.edgeData['a_zAdjust'] +0.0001)
         minWt=-7
@@ -1262,10 +999,11 @@ class Canvas(app.Canvas):
         self.selectedEdges = selectedEdges = state
 
         if selectedEdges:
-            self.workEdges = LoadSelectedEdges(selectedEdges)
-            self.selectedEdgesIndex = gloo.IndexBuffer(self.workEdges)
+            EdgeNodeList = [e.points for e in selectedEdges]
+            edges = np.array(EdgeNodeList, dtype=(np.uint32, 2))            
+            self.selectedEdgesIndex = gloo.IndexBuffer(edges)
         else:
-            self.selectedEdgesIndex = self.workTrailIndex = None
+            self.selectedEdgesIndex = None
 
         if selectedEdges:
             
@@ -1274,7 +1012,8 @@ class Canvas(app.Canvas):
 
             self.selectedVerticalsIndex = self.verticals.select(points)
 
-            self.loadNodeLabels(selectedEdges)
+            nodes = sorted((set(n for edge in selectedEdges for n in edge.nodes)), key=lambda x: x.index)
+            self.loadNodeLabels(nodes, force=True)
 
             #if isinstance(self.selectedObject, Vertex):
                 #self.loadNodeLabels([self.selectedObject])
@@ -1885,6 +1624,7 @@ class NetworkModel3D(object):
         self.markers = np.array(nodeLayerIndices(network.nodeList),
                            dtype=np.uint32)
         self.edgeList=network.edgeList
+        self.nodeList=network.nodeList
         
         edgeEnds = [edge.points for edge in network.edgeList]
         self.edges = np.array(edgeEnds, dtype=(np.uint32, 2))

@@ -152,9 +152,7 @@ def printCountToClientRatioGraph(**kwargs):
         print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.CountToClientRatio(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
 
-
-
-def animationSequence(edges, **kwargs):
+def animationSequenceEdge(edges, **kwargs):
     
     hours= kwargs.pop('hours',[7,8,9,16,17,18])
     days=kwargs.pop('days',[0,1,2,3,4,5,6])
@@ -192,6 +190,13 @@ def animationSequence(edges, **kwargs):
         periods = (end-start)//3600//24//7              # number of weeks
         periodSize=3600*24*7                            # Seconds in a week
         
+
+    if periods > 100:
+        periods=100
+        start = end - 100*periodSize
+        
+    print("Analysis for period {} through {} in {} periods ".format(evtime2String(start),
+                                                                         evtime2String(end),periods))   
     periodCount = min(periods,100) 
     
     window = dict(days=days, hours=hours, start=start, end=end, step=periodSize, binCount=periodCount)
@@ -200,13 +205,72 @@ def animationSequence(edges, **kwargs):
 
     counts = np.zeros((periodCount,ne),dtype=np.float32)
 
-    print("Analysis for period {} throough {} in {} periods ".format(evtime2String(start),
-                                                                     evtime2String(end),periods))
-
-    edgeIdx=0
-    for edge in edges:
+    for edgeIdx, edge in enumerate(edges):
         counts[:,edgeIdx] = edge.movementCounts(**window)    
-        edgeIdx+=1
+            
+    maxCount = np.max(counts)
+    zCoords= counts/maxCount
+    
+    return zCoords, start, periodSize
+
+
+
+def animationSequenceAp(aps, **kwargs):
+    
+    hours= kwargs.pop('hours',[7,8,9,16,17,18])
+    days=kwargs.pop('days',[0,1,2,3,4,5,6])
+    period=kwargs.pop('step', 'days')
+    
+
+    if 'start' in kwargs:
+        start=kwargs.pop('start')
+    else:
+        start = min(assocTime for ap in aps for assocTime, client, duration in ap.associationList)
+        
+    if 'end' in kwargs:
+        end=kwargs.pop('end')
+    else:
+        end = max(assocTime+duration for ap in aps for assocTime, client, duration in ap.associationList)
+     
+    startDay,startHour = time2DayAndHour(start)
+    endDay,endHour=time2DayAndHour(end)
+
+    if period == 'hours':
+        start = int(start - start%3600 + 0.01)
+        end = int(end - end%3600 +0.01)
+        periods = (end-start)//3600
+        periodSize=3600
+    elif period == 'days':
+        start = int(start - start%3600 - (startHour%24)*3600 + 0.01)
+        end = int(end - end%3600 - (endHour%24)*3600 +0.01)
+        periods = int(end-start)//3600//24
+        periodSize=24*3600
+    elif period == 'weeks':
+        start = int(start - start%3600 - dayOfWeek(start)*24*3600 
+                  -  (startHour%24)*3600 + 0.01)                    # Start and end on a Monday at 0h00
+        end = int(end - end%3600 - dayOfWeek(end)*24*3600
+                - (endHour%24)*3600 + 0.01 )
+        periods = (end-start)//3600//24//7              # number of weeks
+        periodSize=3600*24*7                            # Seconds in a week
+        
+
+    if periods > 100:
+        periods=100
+        start = end - 100*periodSize
+        
+    print("AP Analysis for period {} through {} in {} periods ".format(evtime2String(start),
+                                                                         evtime2String(end),periods))   
+    periodCount = min(periods,100) 
+    
+    window = dict(days=days, hours=hours, start=start, end=end, step=periodSize, binCount=periodCount)
+
+    naps = len(aps)
+
+    counts = np.zeros((periodCount,naps),dtype=np.float32)
+
+
+    for apIdx, ap in enumerate(aps):
+        counts[:,apIdx] = ap.associationsCount(**window)    
             
     maxCount = np.max(counts)
     zCoords= counts/maxCount
@@ -351,6 +415,8 @@ class _wap(object):
         self.days = {}
         self.hours = {}
         self.edges=[]
+        self.clientEvents={}
+        self.associationList=[]     # Store start time, duration and client for each association
         
      
         self.coords=[0,0]        
@@ -371,10 +437,9 @@ class _wap(object):
         
         eventTime = float(event["time_f"])
         day,hour = time2DayAndHour(eventTime)
-
-        self.days.setdefault(day,set()).add(client)
-       
+        
         if (event["el_type"] == "disassociation"): 
+            
             duration = float(event["details"]["duration"])
             durationHours = max([int(float(duration)//3600),2])
             for hr in range(hour,durationHours+1):
@@ -416,6 +481,59 @@ class _wap(object):
                 for client in e.count 
                if (min(itertools.chain(*list(e.count[client].values()))) < end 
                    and max(itertools.chain(*list(e.count[client].values()))) > start)]
+    
+    def associationsCount(self, **kwargs):
+        
+        
+        start = kwargs['start']
+        step = kwargs.pop('step')
+        bins = kwargs.pop('binCount')
+        
+        slotSet = [set() for __ in range(bins)]        
+             
+        daySet = set(kwargs.pop('days', range(7)))
+        hourSet = set(kwargs.pop('hours', range(24)))
+
+        slotSet = [set() for __ in range(bins)]
+   
+        activeClients = [set() for __ in range(bins)]
+
+        for asTime, client, duration in sorted(self.associationList, key = lambda x : x[0]):
+            
+            
+            # if not client in activeClients:
+            disTime = asTime + duration
+            asDay, asHour = time2DayAndHour(asTime)
+            disDay, disHour = time2DayAndHour(disTime)
+            activeDays = set([x%7 for x in range(asDay, disDay+1)])
+            activeHours = set([x%24 for x in range(asHour, disHour+1)])
+            
+            if (disTime >= start 
+                and asTime < start + step*bins
+                and activeDays & daySet
+                and activeHours & hourSet):
+                
+                if asTime < start:
+                    slotTime = start
+                    slotDuration = duration - (start - asTime)
+                else:
+                    slotTime = asTime
+                    slotDuration = duration
+                    
+                assert slotDuration >= 0
+                slotSetStart = int((slotTime - start)//step)
+                
+                if (slotTime + slotDuration < start + bins * step):
+                    slotSetEnd = int((slotTime - start + slotDuration)//step + 1) 
+                else:
+                    slotSetEnd = bins
+                    
+                activeSlots = range(slotSetStart, slotSetEnd)
+                    
+                for slot in activeSlots:
+                    activeClients[slot].add(client)
+                
+        return [len(slotSet) for slotSet in activeClients]    
        
        
     def inTimeWindow(self, **kwargs):
@@ -558,9 +676,9 @@ class _client(object):
         self.mostRecentAssociation = None
         
         
-    def logEvent(self, eventtime, assocTime, duration, mac, ap):
+    def logEvent(self, eventtime, assocTime, duration, rssi, mac, ap):
         date=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(assocTime))
-        print("{:>20},{:>17.3f},{:>16},{:>10.2f},{:>15.2f},{:>22}".format(mac, assocTime, ap, duration, eventtime, date), file=eventfp)
+        print("{:>20},{:>17.3f},{:>16},{:>10.2f}, {:>3}, {:>15.2f},{:>22}".format(mac, assocTime, ap, duration, rssi, eventtime, date), file=eventfp)
         
     def appendEvent(self, event, ap):
         
@@ -571,6 +689,7 @@ class _client(object):
                 self.logEvent(eventTime, 
                               self.AnyAPExpectedAssociationTime,   
                               self.AllAPAssociatedDuration, 
+                              self.rssi,
                               self.mac, 
                               "0")
 
@@ -588,11 +707,13 @@ class _client(object):
                 self.logEvent(eventTime, 
                               et, 
                               duration, 
+                              self.rssi,
                               self.mac, 
                               ap.ap_id)    
+                
+                ap.associationList.append([et, self, duration])
 
                 self.duration.setdefault(day,{})
-                
                 
                 if not lap in self.duration[day]:
                     self.duration[day][lap]=duration
@@ -620,6 +741,7 @@ class _client(object):
         self.aps.add(ap)
 
         if (event["el_type"] == "association"): 
+            self.rssi = int(event["details"].get("rssi", 0))
             ProcessAnyAPAssociation()
             ProcessAPAssociation()
             # Mark the days and hours client was connected 
@@ -662,7 +784,7 @@ class _client(object):
                     if eventTime < self.AnyAPExpectedAssociationTime - 1:
                         # Expected association should have happened a second ago 
                         # Assume that event got lost, and process it now
-                        
+                        self.rssi=0
                         ProcessAnyAPAssociation()
                         fix=0
                         self.AnyAPExpectedAssociationTime = expectedAssTime
@@ -684,6 +806,7 @@ class _client(object):
                     if eventTime < self.ExpectedAssociationTime[ap] - 1:
                         # The expected association should have already been processed
                         # So process it now, and simply queue the new disassociation
+                        self.rssi = 0  # Missing association message, so unknown
                         ProcessAPAssociation()
                         fixap=0
                         self.ExpectedAssociationTime[ap] = expectedAssTime
@@ -739,12 +862,9 @@ class eventLog(object):
     def __init__(self, filenames=[]): 
                  
         
-        filenames= ['allEvents-1.json',
-                    'allEvents-0.json',
-                    'allEvents0.json', 
-                    'allEvents1.json',
-                    'allEvents2.json']
-        
+        filenames= ['allEvents0.json']
+            
+                    
         if filenames ==[]:
             filenames=[ 'allEvents-1.json',
                         'allEvents-0.json',
@@ -1054,7 +1174,7 @@ def __test():
         print("{:>4d}  {:>16d}   {:<30}".format(ap.index, ap.ap_id, ap.name))
         
         
-    zCoords=animationSequence(edgeDict.values(), hours=[7,8,9,16,17,18], days=[0,1,2,3,4,5,6], period='days')
+    zCoords=animationSequenceEdge(edgeDict.values(), hours=[7,8,9,16,17,18], days=[0,1,2,3,4,5,6], period='days')
     
     printMovementGraph()
 

@@ -33,7 +33,7 @@ from undo import UndoBuffer
 from graphprogram import verticalsProgram, GlProgram
 from vertexbuffer import vertexBufferObj, nodeLayerIndices, edgeIndices, colorSelect
 from streetmap import StreetModel
-from logreader import animationSequence, evtime2String
+from logreader import animationSequenceEdge, animationSequenceAp, evtime2String
 
 vert = """
 #version 120
@@ -801,10 +801,13 @@ class Canvas(app.Canvas):
 
     def clientCountAnimation(self):
         
-        self.animateZcoords, self.frameStart, self.frameStep = animationSequence(self.network.edgeList, hours=range(24), 
+        self.apAssociationCounts, self.apFrameStart, self.apFrameStep = animationSequenceAp(self.network.nodeList, hours=range(24), 
+                                                                                            days=range(7), period='days')
+        
+        self.edgeMovementCounts, self.frameStart, self.frameStep = animationSequenceEdge(self.network.edgeList, hours=range(24), 
                                     days=range(7), period='days')
         
-        self.maxFrame=len(self.animateZcoords[:,0]) - 1
+        self.maxFrame=len(self.edgeMovementCounts[:,0]) - 1
         self.frame=0
         self._showDay(self.frame)
             
@@ -828,20 +831,26 @@ class Canvas(app.Canvas):
         frameTimeString = evtime2String(self.frameTime)
         self.layerLabels.texts=[frameTimeString]
     
-      
-        markers={}
         print ("Frame {} {}".format(frame, frameTimeString))
-        edgeIdx=0
-        for edge in self.network.edgeList:
+
+         
+        for edgeIdx, edge in enumerate(self.network.edgeList):
             for nidx in edge.points:
-                self.model.edgeData['a_zAdjust'][nidx]= self.animateZcoords[frame,edgeIdx]
-            for nidx in edge.nodepoints:
-                markers[nidx] = max(markers.get(nidx,0), self.animateZcoords[frame,edgeIdx])
-            edgeIdx+=1    
-
-        for nidx in markers:
-            self.model.nodedata['a_zAdjust'][nidx]= markers[nidx]    
-
+                self.model.edgeData['a_zAdjust'][nidx]= self.edgeMovementCounts[frame,edgeIdx]
+        
+        weights = np.log(self.model.edgeData['a_zAdjust'] +0.0001)
+        minWt=-7
+        self.model.edgeData['a_fg_color'] = np.array([colorSelect(1-wt/minWt) for wt in (weights)], dtype=(np.float32,4))
+    
+        if True:
+            for edge in self.network.edgeList:
+                for ep in edge.edgeId:
+                    self.model.edgeData['a_zAdjust'][ep.index]= self.apAssociationCounts[frame,ep.nap.index]
+                
+        for nIdx, node in enumerate(self.network.nodeList):
+            self.model.nodedata['a_zAdjust'][nIdx]= self.apAssociationCounts[frame,nIdx]
+            
+        
         self.network.zEdgeAdjust=self.model.edgeData['a_zAdjust']
         self.network.zNodeAdjust=self.model.nodedata['a_zAdjust']
         
@@ -851,10 +860,7 @@ class Canvas(app.Canvas):
         
         self.updateNodeLabelZCoordinates(self.model.nodedata['a_zAdjust'])
     
-        weights = np.log(self.model.edgeData['a_zAdjust'] +0.0001)
-        minWt=-7
-        self.model.edgeData['a_fg_color'] = np.array([colorSelect(1-wt/minWt) for wt in (weights)], dtype=(np.float32,4))
-    
+        
         vbo = gloo.VertexBuffer(self.model.edgeData)
         self.program_e.bind(vbo)
         self.highlight_e.bind(vbo)

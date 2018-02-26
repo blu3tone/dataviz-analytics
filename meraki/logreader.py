@@ -633,6 +633,7 @@ When processing a new disassociation message:
 
 '''
 
+
 ClientDict = {}
 
 def client(event):
@@ -676,9 +677,9 @@ class _client(object):
         self.mostRecentAssociation = None
         
         
-    def logEvent(self, eventtime, assocTime, duration, rssi, mac, ap):
+    def logEvent(self, evType, eventtime, assocTime, duration, rssi, mac, ap):
         date=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(assocTime))
-        print("{:>20},{:>17.3f},{:>16},{:>10.2f}, {:>3}, {:>15.2f},{:>22}".format(mac, assocTime, ap, duration, rssi, eventtime, date), file=eventfp)
+        print("{:>20},{:>17.3f},{:>8},{:>16},{:>10.2f}, {:>3}, {:>15.2f},{:>22}".format(mac, assocTime, evType, ap, duration, rssi, eventtime, date), file=eventfp)
         
     def appendEvent(self, event, ap):
         
@@ -686,7 +687,8 @@ class _client(object):
             if (self.AnyAPExpectedAssociationTime > 0
                 and (eventTime - self.AnyAPExpectedAssociationTime) < 0.5):
                 
-                self.logEvent(eventTime, 
+                self.logEvent("assoc",
+                              eventTime, 
                               self.AnyAPExpectedAssociationTime,   
                               self.AllAPAssociatedDuration, 
                               self.rssi,
@@ -704,7 +706,8 @@ class _client(object):
                 et = self.ExpectedAssociationTime.pop(lap)
                 duration = self.associatedDuration.pop(lap,0)
 
-                self.logEvent(eventTime, 
+                self.logEvent("Assoc",
+                              eventTime, 
                               et, 
                               duration, 
                               self.rssi,
@@ -725,12 +728,7 @@ class _client(object):
                 else: 
                     self.totalConnectTime[lap] += duration
                     
-                # Scanning is back in time, so paradoxically we remove the ap
-                # from the active associations list when we process an 
-                # association event
-                
-                self.activeAssociations.discard(lap)
-                    
+
             
         eventTime = event["time_f"]
         day, hour = time2DayAndHour(eventTime)
@@ -753,8 +751,8 @@ class _client(object):
       
             # Create an edge to all aps in the Active association list
             for nap in self.activeAssociations:
-                edge(ap,nap, self, eventTime)
-            else: # or an edge to the most recent ap visited if it was visited within 12 hours ago
+                if ap!=nap: edge(ap,nap, self, eventTime)
+            else: # or an edge to the most recent ap visited if it was visited less than 12 hours ago
                 if self.mostRecentAssociation:
                     nap, t = self.mostRecentAssociation
                     if (ap != nap) and (t - eventTime < 12*3600):
@@ -830,6 +828,14 @@ class _client(object):
                 self.days.update(set(range(startday, day + 1)))
                 self.hours.update(set(range(starthour, hour + 1)))                
 
+        elif(event["el_type"] == "splash_auth"):
+            duration = float(event["details"]["duration"])
+            #ip = event["details"]["ip"]
+            self.logEvent("splash", eventTime, eventTime, duration, 0, self.mac, ap)
+            
+        elif(event["el_type"] == "wpa_auth"):
+            self.logEvent("wpa", eventTime, eventTime, 0, 0, self.mac, ap)
+            
         self.mostRecentAssociation=(ap,eventTime)
 
     def ClientRange(self):
@@ -1188,8 +1194,8 @@ def __test():
     printClientGraph(days=[0,1,2,3,4], hours=[7,8,9])
 
 
-    log.printAccessPointUsageColumns()
-    log.printAccessPointUsageByHour()
+    #log.printAccessPointUsageColumns()
+    #log.printAccessPointUsageByHour()
     log.clientDailyConnectionTimes()
     log.clientConnectionTimes()
     log.clientConnectDurations()

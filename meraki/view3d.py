@@ -324,7 +324,7 @@ class Canvas(app.Canvas):
         # The base layer is the street network
         self.baseIndex = gloo.IndexBuffer(self.streetEdges)
         
-        self.view = np.eye(4, dtype=np.float32)
+        self.pitch = self.view = np.eye(4, dtype=np.float32)
         self.projection = np.eye(4, dtype=np.float32)
 
         self.xRot = -65.0  # Pitch
@@ -361,6 +361,7 @@ class Canvas(app.Canvas):
         self.view = self.view.dot(translate(self.vFocus[0:3]))
 
         self.registerDependency(u_view='view',
+                                u_pitch='pitch',
                                 u_projection='projection',
                                 u_offset='offset')
 
@@ -475,6 +476,8 @@ class Canvas(app.Canvas):
             dep['u_view'] = self.view
             dep['u_projection'] = self.projection
             dep['u_offset'] = self.offset
+            if 'u_pitch' in dep._user_variables:
+                dep['u_pitch'] = self.pitch
 
         if ('u_layerMap' in depList):
             for lyr, val in enumerate(self.layerMap):
@@ -498,7 +501,7 @@ class Canvas(app.Canvas):
         model = rotate(90, (1, 0, 0))
 
         self.layerLabels = txt.textLabels(self, labels, coords, layers,
-                                           font_size=32,   billboard=True,
+                                           font_size=32,   billboard="sphere",
                                            anchor_x='center', anchor_y='bottom')
 
     def loadNodeLabels(self, nodes, force=False):
@@ -511,9 +514,9 @@ class Canvas(app.Canvas):
         layers = [node.layerIndex for node in nodes]
         
         if force or not hasattr(self,'nodeLabels') or self.nodeLabels is None:
-            model = rotate(90, (0, 0, 1))
+            model = rotate(90, (0, 0, 1)).dot(rotate(90,(1,0,0)))
             self.nodeLabels = txt.textLabels(self, labels, coords, layers,
-                                             font_size=8, billboard=True,
+                                             font_size=8, billboard="cylinder",
                                              heightOffset=-0.005, model=model,
                                              anchor_x='right', anchor_y='center')
         else:
@@ -1315,17 +1318,29 @@ class Canvas(app.Canvas):
         self.yRot = max(self.yRot, -120)
         self.xRot = min(self.xRot, 120)
         self.xRot = max(self.xRot, -120)
-
+        
         # Prepare by moving the world so that the focus is at 0,0,0
-        self.view = translate(-self.wFocus[0:3])                    # Step5
+        self.pitch  = self.view = translate(-self.wFocus[0:3])                    # Step5
 
         # Yaw then pitch                                                      #
         # Step 6
+        
         self.view = self.view.dot(rotate(
             self.yRot, [0, 0, 1])).dot(rotate(self.xRot, [1, 0, 0]))
 
+
+        # For cylindrical Billboards adjust the pitch of the label to 
+        # match the camera, but maintain fixed roll and yaw.   The 
+        # effect is counter intuitive - by tracking pitch, the label appears 
+        # to maintain a constant pitch wrt the rest of the model, like for example 
+        # a lighthouse standing vertical on a plane.  By not adjusting yaw we get 
+        # cylindrical effect - in the yaw dimension the label always faces the camera:
+        
+        self.pitch = self.pitch.dot(rotate(self.xRot, [1, 0, 0]))      
+        
         # Now translate so that focus is at required location
         self.view = self.view.dot(translate(self.vFocus[0:3]))  # Step 7
+        self.pitch = self.pitch.dot(translate(self.vFocus[0:3]))
 
         self.updateDependents()
 

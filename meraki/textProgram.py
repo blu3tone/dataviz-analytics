@@ -259,6 +259,7 @@ class textLabels(Program):
     VERTEX_SHADER = """
         uniform mat4 u_model;
         uniform mat4 u_view;
+        uniform mat4 u_pitch;
         uniform mat4 u_projection;
         uniform int  u_billboard;
         uniform vec4 u_color;
@@ -287,7 +288,12 @@ class textLabels(Program):
         void main(void) {
             float height = z_coord(a_anchor.z);
 
-           if (u_billboard == 1) {
+            if (u_billboard == 2) {
+                 vec4 pos = (u_pitch * u_model * vec4(a_position.xy, 0, 0))
+                             + (u_view * vec4(a_anchor.xy, height, 1));
+                 gl_Position = u_projection * pos;
+                 } 
+            else if (u_billboard == 1) {
                  vec4 pos = (u_model * vec4(a_position.xy, 0, 0))
                              + (u_view * vec4(a_anchor.xy, height, 1));
                  gl_Position = u_projection * pos;
@@ -460,6 +466,7 @@ class textLabels(Program):
         canvas.registerDependent(self)
 
         self['u_view'] = canvas.view
+        self['u_pitch'] = canvas.pitch
         self['u_projection']  = canvas.projection
 
         for lyr in range(32):
@@ -473,7 +480,7 @@ class textLabels(Program):
         self['u_font_atlas_shape'] = self._font._atlas.shape[:2]
         self['u_offset'] = self.offset
         self['u_heightOffset']  = self.heightOffset
-        self.billboard = kwargs.pop('billboard', False)
+        self.billboard = kwargs.pop('billboard', None)
 
         set_state(blend=True, depth_test=False,
                   blend_func=('src_alpha', 'one_minus_src_alpha'))
@@ -564,8 +571,10 @@ class textLabels(Program):
         return self._billboard
 
     @billboard.setter
-    def billboard(self, enable):
-        if enable:
+    def billboard(self, mode):
+        if mode=='cylinder':
+            self._billboard = 2
+        elif mode == 'sphere':
             self._billboard = 1
         else:
             self._billboard = 0

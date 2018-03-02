@@ -1,6 +1,7 @@
 
 from numpy import cross, array
 from numpy.linalg import norm, det
+from math import hypot
 
 
 def pickDistanceToEdge(edge):
@@ -53,7 +54,7 @@ def pickDistanceToEdge(edge):
     return d, pB[2], t0/norm(A)
 
 
-def excludeFarAways(edges, tol=0.01):
+def excludeFarAwayEdges(edges, tol=0.01):
     """
     Return a list of indices of edges that
     pass close to the origin.
@@ -74,8 +75,10 @@ def excludeFarAways(edges, tol=0.01):
     return res
 
 
+
+
 def pickEdge(edges, tol=0.01):
-    candidates = excludeFarAways(edges, tol)
+    candidates = excludeFarAwayEdges(edges, tol)
 
     pickList = [(pickDistanceToEdge(edges[idx]) + (idx,))
                 for idx in candidates]
@@ -87,3 +90,26 @@ def pickEdge(edges, tol=0.01):
         return (closest, z, t)
 
     return None
+
+
+def pickPoint(points, tol=0.01):
+    '''
+    Given a point translated so that the mouse coordinates are
+    (0,0, Zn) Return:
+
+    - The shortest distance from the point to a ray from the camera
+    through the mouse position (translated to (0.,0., Znear)
+
+    - The Z coord of the pick point,
+
+    '''
+
+    d, z, idx = min((hypot(p[0], p[1]), p[2], idx) for idx, p in enumerate(points))   
+
+    #print ("Pickpoint d ={} z={} idx={}".format(d,z,idx))
+    
+    if d<tol:
+        return idx, z      
+    else:
+        return None
+    

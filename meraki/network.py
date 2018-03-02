@@ -254,7 +254,7 @@ class Network(object):
         maxX,maxY = orthographicTransform(maxLat, maxLong, self.centLat, self.centLong)
         minX,minY = orthographicTransform(minLat, minLong, self.centLat, self.centLong)
 
-        self.scale = max([maxX - minX, maxY - minY]) / 2.2        
+        self.scale = max([maxX - minX, maxY - minY]) / 1.3     
 
         self.NormalizedBoundingBox = [a/self.scale for a in [minX,minY,maxX,maxY]]
 

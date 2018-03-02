@@ -58,14 +58,4 @@ def vertexBufferObj(vertices,minWt=None):
     return nodedata
 
 
-def nodeLayerIndices(nodeLayers):
-    nodeLayerIds = [nl.index for nl in nodeLayers]
-
-    return np.array(nodeLayerIds, dtype=np.uint32)
-
-
-def edgeIndices(edges):
-    edgeEndPoints = [e.endPoints for e in edges]
-    return np.array(edgeEndPoints, dtype=(np.uint32, 2))
-
 

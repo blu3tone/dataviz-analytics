@@ -152,7 +152,7 @@ def printCountToClientRatioGraph(**kwargs):
         print(("[%s]") % (", ".join([", ".join("{:>2}: {:>5.2f}".format(n2.index,e.CountToClientRatio(**kwargs)) 
                                                 for n2,e in sorted(WAPGraph[n1], key=lambda x : x[0].index )) ]))) 
 
-def animationSequenceEdge(edges, **kwargs):
+def edgeMovementsSequence(edges, **kwargs):
     
     hours= kwargs.pop('hours',[7,8,9,16,17,18])
     days=kwargs.pop('days',[0,1,2,3,4,5,6])
@@ -215,7 +215,7 @@ def animationSequenceEdge(edges, **kwargs):
 
 
 
-def animationSequenceAp(aps, **kwargs):
+def WapAssociationCountSequence(aps, **kwargs):
     
     hours= kwargs.pop('hours',[7,8,9,16,17,18])
     days=kwargs.pop('days',[0,1,2,3,4,5,6])
@@ -1180,7 +1180,7 @@ def __test():
         print("{:>4d}  {:>16d}   {:<30}".format(ap.index, ap.ap_id, ap.name))
         
         
-    zCoords=animationSequenceEdge(edgeDict.values(), hours=[7,8,9,16,17,18], days=[0,1,2,3,4,5,6], period='days')
+    zCoords=edgeMovementsSequence(edgeDict.values(), hours=[7,8,9,16,17,18], days=[0,1,2,3,4,5,6], period='days')
     
     printMovementGraph()
 

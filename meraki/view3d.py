@@ -1,6 +1,5 @@
 
 
-
 import numpy as np
 from numpy.linalg import inv
 
@@ -16,356 +15,23 @@ import cProfile
 import pstats
 
 from vispy import gloo, app
-from vispy.gloo import set_viewport, set_state, clear
+from vispy.gloo import set_viewport, set_state, clear, read_pixels
 from vispy.util.transforms import frustum, translate, rotate
 from vispy.util.keys import CONTROL
+
+from PIL import Image
 
 import textProgram as txt
 from network import Network
 
-import picker
 from undo import UndoBuffer
 
-#from networkVertex import Vertex, vertices
-from vertexbuffer import vertexBufferObj, nodeLayerIndices, edgeIndices
-from streetmap import StreetModel
+from graphprogram import verticalsProgram, edgesProgram, nodesProgram, GlProgram, geojsonProgram, planesProgram
 
+from logreader import edgeMovementsSequence, WapAssociationCountSequence, evtime2DateString, evtime2DateTimeString
 
-vert = """
-#version 120
 
-// Uniforms
-// ------------------------------------
-uniform mat4 u_model;
-uniform mat4 u_view;
-uniform mat4 u_projection;
-uniform float u_antialias;
-uniform float u_size;
-uniform float u_offset;
-uniform vec4 u_color;
-uniform int  u_layerMap[32];
-uniform vec4 u_bg_color;
 
-
-// Attributes
-// ------------------------------------
-attribute vec3  a_position;
-attribute vec4  a_fg_color;
-attribute vec4  a_bg_color;
-attribute float a_linewidth;
-attribute float a_size;
-attribute float a_layer;
-
-// Varyings
-// ------------------------------------
-varying vec4 v_fg_color;
-varying vec4 v_bg_color;
-varying float v_size;
-varying float v_linewidth;
-varying float v_antialias;
-
-
-float z_coord(int layerIdx, float heightOffset) {
-            int lyr = u_layerMap[layerIdx];
-            float z = lyr  * u_offset - 1.0 + heightOffset;
-            return z;
-        }
-
-void main (void) {
-    int lyridx = int(a_layer);
-
-    v_size = a_size * u_size;
-    v_linewidth = a_linewidth;
-    v_antialias = u_antialias;
-
-    v_fg_color  = a_fg_color;
-
-    if (u_color.a >= 0.0)
-         {
-          v_fg_color  = u_color;
-         }
-
-    v_bg_color  = a_bg_color;
-
-    if (u_bg_color.a >= 0.0)
-         {
-          v_bg_color  = u_bg_color;
-         }
-
-    float ht = z_coord(lyridx, a_position.z);
-
-    gl_Position = u_projection * u_view * u_model *
-                        vec4(a_position.x, a_position.y, ht, 1.0);
-    gl_PointSize = v_size + 2*(v_linewidth + 1.5*v_antialias);
-}
-"""
-
-frag = """
-#version 120
-
-// Constants
-// ------------------------------------
-
-// Varyings
-// ------------------------------------
-varying vec4 v_fg_color;
-varying vec4 v_bg_color;
-varying float v_size;
-varying float v_linewidth;
-varying float v_antialias;
-
-// Functions
-// ------------------------------------
-float marker(vec2 P, float size);
-
-
-// Main
-// ------------------------------------
-void main()
-{
-    float size = v_size +2*(v_linewidth + 1.5*v_antialias);
-    float t = v_linewidth/2.0-v_antialias;
-
-    // The marker function needs to be linked with this shader
-    float r = marker(gl_PointCoord, size);
-
-    float d = abs(r) - t;
-    if( r > (v_linewidth/2.0+v_antialias))
-    {
-        discard;
-    }
-    else if( d < 0.0 )
-    {
-       gl_FragColor = v_fg_color;
-    }
-    else
-    {
-        float alpha = d/v_antialias;
-        alpha = exp(-alpha*alpha);
-        if (r > 0)
-            gl_FragColor = vec4(v_fg_color.rgb, alpha*v_fg_color.a);
-        else
-            gl_FragColor = mix(v_bg_color, v_fg_color, alpha);
-    }
-}
-
-float marker(vec2 P, float size)
-{
-    float r = length((P.xy - vec2(0.5,0.5))*size);
-    r -= v_size/2;
-    return r;
-}
-"""
-
-
-
-
-fs = """
-#version 120
-
-// Varyings
-// ------------------------------------
-varying vec4 v_fg_color;
-
-void main(){
-    gl_FragColor = v_fg_color;
-}
-"""
-
-vs_plane = """
-#version 120
-
-uniform mat4 u_model;
-uniform mat4 u_view;
-uniform mat4 u_projection;
-uniform float u_offset;
-uniform int    u_layerMap[32];
-uniform vec4 u_lyr_fg_color[32];
-
-attribute vec3 a_position;
-attribute float a_layer;
-
-varying vec4 v_color;
-
-float z_coord(int layerIdx, float heightOffset) {
-            int lyr = u_layerMap[layerIdx];
-            float z = lyr  * u_offset - 1.0 + heightOffset;
-            return z;
-        }
-
-void main() {
-    int lyridx = int(a_layer);
-    float ht = z_coord(lyridx, a_position.z);
-    gl_Position = u_projection * u_view * u_model *
-                         vec4(a_position.x, a_position.y, ht, 1);
-
-
-    if (u_layerMap[lyridx] <= - 1)
-         v_color = vec4 (1.,1.,1.,0.);
-    else
-         v_color =  u_lyr_fg_color[lyridx];
-    }
-"""
-
-fs_plane = """
-#version 120
-
-varying vec4 v_color;
-
-void main(){
-    gl_FragColor = v_color;
-
-}
-"""
-
-
-#def Verticals(network):
-    #res = []
-    #for n in network.nodeList:
-
-        #maxNodeLyr = max([(nl.layer.idx, nl.vtx) for nl in n.nodeLayerList])
-        #minNodeLyr = min([(nl.layer.idx, nl.vtx) for nl in n.nodeLayerList])
-
-        #if maxNodeLyr != minNodeLyr:
-            #res.append((maxNodeLyr[1], minNodeLyr[1]))
-
-    #return res
-
-
-#def SelectVerticals(edges):
-    #NodeEdges = {}  # Key is Node, value is NodeLayer
-
-    #for n, nl in list(set((nl.node, nl) for e in edges for nl in e.points)):
-        #NodeEdges.setdefault(n, []).append(nl)
-
-    #res = []
-    #for n in NodeEdges:
-        #maxNodeLyr = max([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
-        #minNodeLyr = min([(nl.layer.idx, nl.vtx) for nl in NodeEdges[n]])
-
-        #if maxNodeLyr != minNodeLyr:
-            #res.append((maxNodeLyr[1], minNodeLyr[1]))
-    #return res
-
-
-def SelectVertices(edges):
-    Nodes = list(set(itertools.chain(*[e.nodepoints for e in edges])))
-    pointArray = np.array(Nodes, dtype=(np.uint32, 1))
-    return pointArray
-
-
-def LoadPlanes(network):
-    nl = network.layerCount
-    layerdata = np.zeros(nl * 6, dtype=[('a_position',
-                                         np.float32, 3),
-                                        ('a_layer',
-                                         np.float32, 1),
-                                        ])
-
-    x0, y0, x1, y1 = network.NormalizedBoundingBox
-
-    layerdata['a_position'] = np.array([(x, y, -0.002) for z in range(nl)
-                                        for x, y in [[x0, y0],
-                                                     [x0, y1],
-                                                     [x1, y0],
-                                                     [x1, y1],
-                                                     [x1, y0],
-                                                     [x0, y1]]],
-                                       dtype=np.float32)
-
-    layerdata['a_layer'] = np.array([list(range(nl))]*6, dtype=np.float32).transpose().ravel()
-
-    return layerdata
-
-
-def LoadSelectedEdges(edgeList):
-
-    EdgeNodeList = [e.points for e in edgeList]
-    edges = np.array(EdgeNodeList, dtype=(np.uint32, 2))
-    
-    return edges
-
-
-def baseLayerEdges(network):
-    '''
-    Create a ghost image of the physical network
-    to provide context when viewing subset selections
-    '''
-    baseLayer = network.LayerList[0]
-    links = baseLayer.edgeIndices
-    edgeVertices = np.array(links, dtype=(np.uint32, 2))
-    return edgeVertices
-
-class GlProgram(gloo.Program):
-
-    def __init__(self, **kwargs):
-        self.parent = kwargs.pop('parent', None)
-        canvas = self.canvas = kwargs.pop('canvas')
-        self.heightOffset = kwargs.pop('heightOffset', 0.0)
-
-        super(GlProgram, self).__init__(**kwargs)
-
-        #  Register for View and Projection updates with the canvas
-        canvas.registerDependent(self)
-
-        self['u_view'] = canvas.view
-        self['u_projection'] = canvas.projection
-
-        #  A program is transformed by the chain of model matrices
-        #  from parent to the root.
-
-        self.__dict__['children'] = []
-
-        if self.parent is not None:
-            self.parent.registerChild(self)
-        else:
-            self.root = self
-
-        self.model = np.eye(4, dtype=np.float32)
-
-    def registerChild(self, child):
-        self.children.append(child)
-        child.root = self.root
-
-    def modelProduct(self):
-        """
-        Model matrix is the product of all model transformations from here
-        down to the root
-
-        The model must be recalculated if there is a change to the model on
-        any of the ancestors on the chain down to root
-        """
-        if self.parent is None:
-            return self._model
-        else:
-            return self._model.dot(self.parent.modelProduct())
-
-    @property
-    def height(self):
-        if self.parent is None:
-            return self.canvas.height
-        else:
-            return self.parent.height
-
-    def __getitem__(self, name):
-        if name == 'u_model':
-            return self.modelProduct()
-        else:
-            return super(GlProgram, self).__getitem__(name)
-
-    def updateChildModels(self):
-        self['u_model'] = self.modelProduct()
-        for child in self.children:
-            child.updateChildModels()
-
-    @property
-    def model(self):
-        return self._model
-
-    @model.setter
-    def model(self, value):
-        self._model = value
-        self.updateChildModels()
 
 
 class Canvas(app.Canvas):
@@ -373,11 +39,12 @@ class Canvas(app.Canvas):
     def __init__(self, **kwargs):
         # Initialize the canvas for real
         u_antialias = 1
-
+        self.hourAnimator=0
         self.parent = kwargs['parent']
 
         self.model = model = kwargs.pop('model')
-
+        self.network = model.network
+        
         app.Canvas.__init__(self, keys='interactive', **kwargs)
         self.size = 800, 778
         self.position = 50, 50
@@ -396,47 +63,13 @@ class Canvas(app.Canvas):
         self.far = -6
 
         self.worldCenterZ = self.far + 2.0
-
-        self.selectedEdges = None
-
-        self.selectedEdgesIndex = None
-        self.sVerticalsIndex = None
-        self.highlightIndex = None
-        self.selectedIndex = None
-        self.selectedObject = None
-        self.highlight = None
-        self.highlighted = None
-        self.highlightT = 0.5
-
         self.layerMap = list(range(32))
         self.savedLayerMap = list(self.layerMap)
 
-        self.trailHeightOffset = 0.005
-        self.highlightColor = (0.0, 1.0, 0.0, 1.0)
-        self.selectedColor = (0.7, 0.375, 0.375, 1.0)
         self.baseColorDefault = (0.8, 0.8, 0.8, 1)
-        self.edgeColor = self.edgeColorDefault = (0.9, 0.6, 0.6, 1)
-        self.trailColor = self.trailColorDefault = (0.6, 0.6, 0.9, 0.5)
-        self.pointColor = self.pointColorDefault = (0.3, 0.3, 0.8, 1)
-        self.verticalColor = self.verticalColorDefault = (0.6, 0.6, 0.2, 0.4)
+        self.layerList=self.model.network.LayerList
 
-        self.pickEdgeCoords = None
-
-        self.markerIndex = gloo.IndexBuffer(model.markers)
-        self.edgesIndex = gloo.IndexBuffer(model.edges)
-        
-        self.streetVertices, self.streetEdges = StreetModel(self.model.network.centLat, 
-                                                            self.model.network.centLong, 
-                                                            self.model.network.scale)
-        self.streetVbo = gloo.VertexBuffer(self.streetVertices)
-        
-        layerdata = LoadPlanes(model.network)
-        self.planeVbo = gloo.VertexBuffer(layerdata)
-
-        # The base layer is the street network
-        self.baseIndex = gloo.IndexBuffer(self.streetEdges)
-        
-        self.view = np.eye(4, dtype=np.float32)
+        self.pitch = self.view = np.eye(4, dtype=np.float32)
         self.projection = np.eye(4, dtype=np.float32)
 
         self.xRot = -65.0  # Pitch
@@ -462,8 +95,6 @@ class Canvas(app.Canvas):
         self.dependents = []
         self.dependencies = {}
 
-        self.updateLayerSpacing(self.spacing)
-
         self.undo = UndoBuffer(operation=self._updateView,
                                rState=(self.wFocus, self.vFocus,
                                        self.xRot, self.yRot, self.zoomIdx),
@@ -473,77 +104,32 @@ class Canvas(app.Canvas):
         self.view = self.view.dot(translate(self.vFocus[0:3]))
 
         self.registerDependency(u_view='view',
+                                u_pitch='pitch',
                                 u_projection='projection',
                                 u_offset='offset')
 
-        self.program = GlProgram(canvas=self, vert=vert, frag=frag)
-        self.program.bind(model.vbo)
-        
-        for lyr in range(32):
-            self.program['u_layerMap[%d]' % lyr] = lyr
-
-        self.program['u_size'] = 1
-        self.program['u_color'] = self.pointColor
-        self.program['u_bg_color'] = (0.2, 0.2, 0.2, -0.6)
-        self.program['u_antialias'] = u_antialias
-        
-        
-        self.program_b = GlProgram(canvas=self, vert=vert, frag=fs,
-                                   parent=self.program)
-        self.program_b.bind(self.streetVbo)
-        for lyr in range(32):
-            self.program_b['u_layerMap[%d]' % lyr] = lyr
-
-        self.program_b['u_size'] = 1
-        self.program_b['u_color'] = (0.6, 0.6, 0.6, 1.0)
-        self.program_b['u_bg_color'] = (0.2, 0.2, 0.2, -0.6)
-        self.program_b['u_antialias'] = u_antialias
-        self.program_b['u_offset'] = -0.05
-        
-
-        self.program_e = GlProgram(canvas=self, vert=vert, frag=fs,
-                                   parent=self.program)
-        self.program_e.bind(model.edgeEndPointVbo)
-        
-        for lyr in range(32):
-            self.program_e['u_layerMap[%d]' % lyr] = lyr
-
-        self.program_e['u_size'] = 1
-        self.program_e['u_color'] = (0.9, 0.2, 0.2, -1.0)
-        self.program_e['u_bg_color'] = (0.2, 0.2, 0.2, -0.6)
-        self.program_e['u_antialias'] = u_antialias
-
-        # Planes (Stack of translucent Rectangles)
-        self.program_p = GlProgram(canvas=self, vert=vs_plane, frag=fs_plane,
-                                   parent=self.program, heightOffset=-0.001)
-        self.program_p.bind(self.planeVbo)
-
-        color = np.random.uniform(0.5, 1, (32, 3))
-        colorTable = np.hstack((color, np.ones((32, 1))))
-        colorTable[:, 3] = 0.15
-
-        for lyr in range(32):
-            self.program_p['u_lyr_fg_color[%d]' % lyr] = colorTable[lyr]
-            self.program_p['u_layerMap[%d]' % lyr] = lyr
-
-        # Highlight
-
-        self.highlight_e = GlProgram(canvas=self, vert=vert, frag=fs,
-                                     parent=self.program, heightOffset=0.001)
-        self.highlight_e.bind(model.edgeEndPointVbo)
-
-        for lyr in range(32):
-            self.highlight_e['u_layerMap[%d]' % lyr] = lyr
-
-        self.highlight_e['u_size'] = 1.5
-        self.highlight_e['u_color'] = self.highlightColor
-        self.highlight_e['u_bg_color'] = (1.0, 1.0, 1.0, 1)
-        self.highlight_e['u_antialias'] = u_antialias
-
+        self.markers = nodesProgram(self.network.nodeList, canvas=self)
+        self.basemap = geojsonProgram(canvas=self, 
+                                      centLat=self.network.centLat, 
+                                      centLong=self.network.centLong, 
+                                      scale=self.network.scale)
+        self.edges = edgesProgram(self.network.edgeList, canvas=self, parent=self.markers)
+        self.planes = planesProgram(canvas=self, parent=self.markers, heightOffset=-0.001,
+                                    network=self.network)
+     
         self.updateFrustum(zoomIdx=0, size=self.size)
 
+        self.updateLayerSpacing(self.spacing)
         self.loadLayerLabels()
-        self.loadNodeLabels(self.model.edgeList)        
+
+        self.loadNodeLabels(self.network.nodeList) 
+       
+        self.verticals = verticalsProgram(canvas=self, nodeData=self.markers.nodeData, 
+                                          parent=self.markers)
+
+        self.selectedEdges=[]
+        self.selectedObject=None
+        self.highlight=self.highlighted=None
         
         self.updateView()
 
@@ -581,6 +167,8 @@ class Canvas(app.Canvas):
             dep['u_view'] = self.view
             dep['u_projection'] = self.projection
             dep['u_offset'] = self.offset
+            if 'u_pitch' in dep._user_variables:
+                dep['u_pitch'] = self.pitch
 
         if ('u_layerMap' in depList):
             for lyr, val in enumerate(self.layerMap):
@@ -589,6 +177,11 @@ class Canvas(app.Canvas):
                     for dep in self.dependents:
                         dep['u_layerMap[%d]' % lyr] = val
                     self.savedLayerMap[lyr] = val
+            
+                    
+        for dep in self.dependents:
+            if '_updateWorldCoordinates' in dep.__dict__:
+                dep._updateWorldCoordinates()
 
     def loadLayerLabels(self):
         """
@@ -598,55 +191,38 @@ class Canvas(app.Canvas):
         pos = self.model.NormalizedBoundingBox[:2]
 
         labels = [lyr.name for lyr in self.model.layerList]
-        coords = [(pos[0], pos[1], i) for i in range(len(labels))]
+        coords = [(pos[0], pos[1], 0) for i in range(len(labels))]
+        layers = [lyr.index for lyr in self.model.layerList]
 
         model = rotate(90, (1, 0, 0))
 
-        self.layerLabels = txt.textLabels(self, labels, coords,
-                                           font_size=32,  model=model,
-                                           anchor_x='left', anchor_y='bottom')
+        self.layerLabels = txt.textLabels(self, labels, coords, layers,
+                                           font_size=32,   billboard="sphere",
+                                           anchor_x='center', anchor_y='bottom')
 
-    def loadNodeLabels(self, edges):
+    def loadNodeLabels(self, nodes, force=False):
         """
-        Text labels for listed edges
+        Text labels for listed nodes
         """
-        vertices = list(set([getattr(v,'node',v) for e in edges for v in e.edgeId]))
-
-        labels = [str(node.name) for node in vertices]
         
-        coords = [node.coords for node in vertices]
-        model = rotate(90, (0, 0, 1))
+        labels = [str(node.name) for node in nodes]
+        coords = [(node.coords[0], node.coords[1], 0) for node in nodes]
+        layers = [node.layerIndex for node in nodes]
         
-        if not hasattr(self,'nodeLabels') or self.nodeLabels is None:
-
-            self.nodeLabels = txt.textLabels(self, labels, coords,
-                                             font_size=5, billboard=True,
+        if force or not hasattr(self,'nodeLabels') or self.nodeLabels is None:
+            model = rotate(90, (0, 0, 1)).dot(rotate(90,(1,0,0)))
+            self.nodeLabels = txt.textLabels(self, labels, coords, layers,
+                                             font_size=8, billboard="cylinder",
                                              heightOffset=-0.005, model=model,
                                              anchor_x='right', anchor_y='center')
         else:
             self.nodeLabels.texts = labels
             self.nodeLabels.coords = coords
-
-    def updatePickVertices(self):
-        """
-        Transform the vertex locations to vec4 by looking up the layer
-        offset, and augmenting with a 1.0
-        """
-        # Create an array of Vec4s  by adding a 1 at the end
-        coords = np.array(self.model.vertexLocations)
-        layerIndices = np.array(self.model.networkLayers)
-
-        nl = len(coords)
-
-        zCoords = np.array([self.layerZCoordinates[self.layerMap[int(i)]]
-                            for i in layerIndices], dtype=np.float32)
-
-        #zOffsets = np.array(coords[:, -1], dtype=np.float32)
-
-        self.worldVertexPositions = np.hstack((coords[:, :-1],
-                                               zCoords.reshape(nl, 1),
-                                               np.ones((nl, 1))))
-
+            self.nodeLabels.layers = layers
+            
+    def updateNodeLabelZCoordinates(self, zLocs):
+        pass
+        #self.nodeLabels.zCoords= zLocs
 
     def on_initialize(self, event):
         set_state(clear_color='white', depth_test=True, blend=True,
@@ -857,7 +433,7 @@ class Canvas(app.Canvas):
                                   self.zoomBottom, self.zoomTop,
                                   -self.near, -self.far)
 
-        self.program['u_projection'] = self.projection
+        self.markers['u_projection'] = self.projection
 
     def on_resize(self, event):
         self.updateFrustum(size=event.size)
@@ -871,16 +447,87 @@ class Canvas(app.Canvas):
         pass
 
     def GlFrameImage(self):
-
-        buffer = glReadPixels(0, 0, self.Width, self.Height, GL_RGB, GL_UNSIGNED_BYTE)
-
-        # Use PIL to convert raw RGB buffer and flip the right way up
-        image = Image.fromstring(mode="RGB", size=(self.Width, self.Height), data=buffer)
-        image = image.transpose(Image.FLIP_TOP_BOTTOM)
-
+        buffer = read_pixels()
+        image = Image.fromarray(buffer, mode="RGBA")
         return image
 
+    def clientCountAnimation(self):
+        self.apAssociationCounts, self.apFrameStart, self.apFrameStep = WapAssociationCountSequence(self.network.nodeList, hours=range(24), 
+                                                                                            days=range(7), period='days')
+        
+        self.edgeMovementCounts, self.frameStart, self.frameStep = edgeMovementsSequence(self.network.edgeList, hours=range(24), 
+                                    days=range(7), period='days')
+        
+        self.maxFrame=len(self.edgeMovementCounts[:,0]) - 1
+        self.frame=0
+        self._showFrame(self.frame)
+        
+    def clientHourAnimation(self):
+        self.apAssociationCounts, self.apFrameStart, self.apFrameStep = WapAssociationCountSequence(self.network.nodeList, period='hours')
+        self.edgeMovementCounts, self.frameStart, self.frameStep = edgeMovementsSequence(self.network.edgeList, period='hours')
+        
+        self.maxFrame=len(self.edgeMovementCounts[:,0]) - 1
+        self.frame=0
+        self._showFrame(self.frame)    
+        
+    def nextFrame(self):
+        self.frame += 1
+        if self.frame > self.maxFrame: self.frame = self.maxFrame
+        self._showFrame(self.frame)      
+        
+    def prevFrame(self):
+        self.frame -= 1
+        if self.frame < 0: self.frame = 0
+        self._showFrame(self.frame)              
+        
+    def _showFrame(self,frame):
+        
+        # Plots represent data in the z dimension over a gis map.
+        # The plot uses 3d Equivents of bar charts, line charts and point cloud data.
+        
+        # An example, the number of wifi uses can be plotted using a bar or stacked bar. 
+        # where the components of the stack may for divide the user cound based on 
+        # some classification like duration.
+        
+        # A line chart may be used to indicate traffic between wireless access points
+        # The color or width of the line encodes the number of users that move between the locations
+        
+        # A point cloud can indicate other location based data - for example Taxi / Uber drop off location
+        # vs trip distance
+        
+        # This version of code animates over time.  The frames might model data for a sequence of days.
+        
+        self.markers.setHighlight(None)
+        self.edges.setHighlight(None)
+        
+        self.frameTime = self.frameStart + frame*self.frameStep
+    
+        frameTimeString = evtime2DateTimeString(self.frameTime)
+        self.layerLabels.texts=[frameTimeString]
+    
+        print ("Frame {} {}".format(frame, frameTimeString))
 
+
+        self.edges.updateColors(self.edgeMovementCounts[frame])
+        self.edges.updateZcoords(self.apAssociationCounts[frame])
+        # self.edges.updateAttributes(self.edgeMovementCounts[frame])
+        self.markers.updateAttributes(self.apAssociationCounts[frame])
+       
+        self.verticals.updateAttributes(self.markers.nodeData['a_zAdjust'])
+        self.loadNodeLabels(self.markers.nodeList)
+        
+        self.on_draw()
+        self.swap_buffers()  
+    
+        img = self.GlFrameImage()
+        
+        img.load()  
+        background = Image.new('RGB', img.size, color=(255,255,255))
+        background.paste(img, mask=img.split()[3])  # 3 is the alpha channel        
+        
+        filename = "/tmp/dg%04d.png" % (frame)
+        background.save(filename)   
+        
     def OnAnimate(self):
 
         for frame in range(self.movie.endFrame()):
@@ -888,38 +535,49 @@ class Canvas(app.Canvas):
                 setattr(self,attr,val)
 
             self.updateView(Animate = True)
-            self.OnDraw()
+            self.on_draw()
 
             img = self.GlFrameImage()
             filename = "/tmp/nm%04d.png" % (frame)
             img.save(filename)
 
+    def Pirouette(self):
+
+        savedYrot = self.yRot
+
+        for offs in range(0,360,15):
+            self.yRot = (savedYrot + offs) % 360
+            self.updateView()
+            self.on_draw()
+
+            self.swap_buffers()  
+        
+            img = self.GlFrameImage()
+            
+            img.load()  
+            background = Image.new('RGB', img.size, color=(255,255,255))
+            background.paste(img, mask=img.split()[3])  # 3 is the alpha channel        
+            
+            filename = "/tmp/spg%04d-%03d.png" % (self.frame, offs)
+            background.save(filename)   
+        
+        self.yRot=savedYrot
+        self.updateView()
+       
 
     def showHighlight(self, obj):
 
         if hasattr(obj, 'edgeId'):
-            p1, p2 = obj.edgeId
-            edgeList = []
-            edgeList.append(obj.points)
-            pointList = obj.points
-            highlightEdge = np.array(edgeList, dtype=(np.uint32, 2))
-            self.highlightIndex = gloo.IndexBuffer(highlightEdge)
-            self.highlightHeightOffset = 0
-
-            highlightPoints = np.array(pointList, dtype=(np.uint32, 1))
-            self.highlightPointIndex = gloo.IndexBuffer(highlightPoints)
+            self.edges.setHighlight(obj)
+           
         elif hasattr(obj, 'index'):
-            edgeList = []
-            highlightEdge = np.array(edgeList, dtype=(np.uint32, 2))
-            self.highlightIndex = gloo.IndexBuffer(highlightEdge)
-            pointList = [obj.index]
-            highlightPoints = np.array(pointList, dtype=(np.uint32, 1))
-            self.highlightPointIndex = gloo.IndexBuffer(highlightPoints)
-            self.highlightHeightOffset = 0
-
+            self.markers.setHighlight(obj)
+            
     def SelectAndNotify(self, obj, selectedEdges):
         self.Select(obj, selectedEdges)
-        #self.parent.NotifySelected(obj, selectedEdges)
+        
+        # Let the higher order app know so that it can update other frames
+        # self.parent.NotifySelected(obj, selectedEdges)
 
     def Reset (self):
         vFocus = np.array([0., 0., self.worldCenterZ, 1.],
@@ -931,110 +589,58 @@ class Canvas(app.Canvas):
         selectedEdges = None
         self.Select(self.highlighted, selectedEdges)
 
-
     def Select(self, obj, selectedEdges):
 
         self.undo.save(operation=self._Select,
                        rState=(obj, selectedEdges),
                        uState=(self.selectedObject, self.selectedEdges))
         self.selectedObject, self.selectedEdges = obj, selectedEdges
-        self._Select((obj, selectedEdges))
+        self._Select(obj, selectedEdges)
 
-    def _Select(self, state):
-        obj, selectedEdges = state
+    def _Select(self, obj, selectedEdges):
         self._setSelectedItem(obj)
-        self._SetSelectionList((selectedEdges))
+        self._SetSelectionList(selectedEdges)
 
     def _setSelectedItem(self, obj):
         self.selectedObject = obj
-
-        self.highlightIndex = None
-        self.highlightPointIndex = None
-
         if obj is not None:
-
             self.highlight = obj
 
             if hasattr(obj,'edgeId'):
-                edgeList = []
-                edgeList.append(obj.points)
-                pointList = list(obj.points)
-                selectedEdge = np.array(edgeList, dtype=(np.uint32, 2))
-                self.selectedIndex = gloo.IndexBuffer(selectedEdge)
-                selectedPoints = np.array(pointList, dtype=(np.uint32, 1))
-                self.selectedPointIndex = gloo.IndexBuffer(selectedPoints)
-
-            elif hasattr(obj, 'index'):
-                edgeList = []
-                selectedEdge = np.array(edgeList, dtype=(np.uint32, 2))
-                self.selectedIndex = gloo.IndexBuffer(selectedEdge)
-                pointList = [obj.index]
-                selectedPoints = np.array(pointList, dtype=(np.uint32, 1))
-                self.selectedPointIndex = gloo.IndexBuffer(selectedPoints)
+                self.edges.setSelectedItem(obj)
+                self.markers.setSelectedEdge(obj)   
                 
-            if self.highlight != self.highlighted:
-                print(("Selector %s" % (self.highlight.name)))
-
-                self.showHighlight(self.highlight)
-                self.highlighted = self.highlight            
+            elif hasattr(obj, 'index'):
+                self.markers.setSelectedNode(obj)
+                self.edges.unselect()
         else:
-            self.selectedIndex = None
-            self.selectedPointIndex = None
-            
-    def SetSelectionList(self, selectedEdges):
-        self.undo.save(operation=self._SetSelectionList,
-                       rState=(selectedEdges),
-                       uState=(self.selectedEdges))
-        self.selectedEdges = selectedEdges
+            self.edges.unselect()
+            self.markers.unselect()
+            self.verticals.unselect()
+  
+    def selectVertices(self,selectedEdges):
+        
+        points = list(set([n.index for edge in selectedEdges for n in edge.nodes]))
+        
+        return np.array(points,dtype=np.uint32)
 
-    def _SetSelectionList(self, state):
-
-        self.selectedEdges = selectedEdges = state
+    def _SetSelectionList(self, selectedEdges):
+        self.selectedEdges = selectedEdges 
+        
+        self.edges.setSelectionList(selectedEdges)
+        self.markers.setSelectionList(selectedEdges)
 
         if selectedEdges:
-            self.workEdges = LoadSelectedEdges(selectedEdges)
-            self.selectedEdgesIndex = gloo.IndexBuffer(self.workEdges)
-        else:
-            self.selectedEdgesIndex = self.workTrailIndex = None
-
-        if selectedEdges:
-            #verticals = SelectVerticals(selectedEdges)
-            #self.sVerticalsIndex = gloo.IndexBuffer(verticals)
-
-            points = SelectVertices(selectedEdges )
+            # To be refactored...
+            points = self.selectVertices(selectedEdges )
             self.sPointsIndex = gloo.IndexBuffer(points)
+            self.selectedVerticalsIndex = self.verticals.select(points)
 
-            self.loadNodeLabels(selectedEdges)
-
-            #if isinstance(self.selectedObject, Vertex):
-                #self.loadNodeLabels([self.selectedObject])
-            #elif isinstance(self.selectedObject, Edge):
-                #self.loadNodeLabels(self.selectedObject.points)
-
-            # Dim whatever's not selected by setting a to 0.1
-            self.edgeColor = self.edgeColorDefault[:-1] + (0.1, )
-            self.pointColor = self.pointColorDefault[:-1] + (0.1, )
-            self.verticalColor = self.verticalColorDefault[:-1] + (0.1,)
-
-            #self.activeLayers = list(set(e.layer.idx for e in selectedEdges))
-            #layerMap = dict(list(zip(self.activeLayers,
-                                #list(range(len(self.activeLayers))))))
-
-            #self.layerMap = [layerMap.get(k, -2)
-                             #for k in range(self.model.layerCount)]
-
-        else:
-            self.sVerticalsIndex = None
-            self.edgeColor = self.edgeColorDefault
-            self.pointColor = self.pointColorDefault
-            self.verticalColor = self.verticalColorDefault
-
-            self.activeLayers = list(range(self.model.layerCount))
-            self.layerMap = list(range(32))
+            nodes = sorted((set(n for edge in selectedEdges for n in edge.nodes)), key=lambda x: x.index)
+            self.loadNodeLabels(nodes, force=True)
 
         self.updateDependents('u_layerMap')
         self.updateLayerSpacing()
-        self.updatePickVertices()
 
         # Change the world focus to account for the change in layer positions
 
@@ -1043,77 +649,22 @@ class Canvas(app.Canvas):
         self.vFocus = self.wFocus.dot(self.view)
         self.updateView()
 
-    def on_draw(self, event):
-
+    def on_draw(self, event=None):
         # pr = cProfile.Profile()
         # pr.enable()
 
         clear(color=True, depth=True)
-        self.program_p.draw('triangles')
 
-        self.program_b['u_size'] = 1
-        self.program_b['u_color'] = self.baseColorDefault
-        self.program_b.draw('lines', self.baseIndex)
-
-        if self.selectedEdgesIndex:
-            #self.program_e['u_color'] = self.edgeColorDefault
-
-            if self.selectedEdgesIndex:
-                self.program_e.draw('lines', self.selectedEdgesIndex)
-                
-            #self.program_e['u_color'] = self.verticalColorDefault
-            #self.program_e.draw('lines', self.sVerticalsIndex)
-
-            self.program['u_color'] = self.pointColorDefault
-            self.program.draw('points', self.sPointsIndex)
-
-            # pr = cProfile.Profile()
-            # pr.enable()
-
-            self.nodeLabels.draw()
-
-            # pr.disable()
-            # s = StringIO.StringIO()
-            # sortby = 'cumulative'
-            # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            # ps.print_stats()
-            # print s.getvalue()
-
-        else:
-            
-            
-            self.program_e['u_size'] = 1
-            self.program_e.draw('lines', self.edgesIndex)
-
-            self.program['u_color'] = self.pointColor
-            self.program.draw('points', self.markerIndex)
-            # self.nodeLabels.draw()
-
-
-        if self.selectedIndex is not None:
-            self.highlight_e['u_color'] = self.selectedColor
-            self.highlight_e.draw('lines', self.selectedIndex)
-            self.program['u_color'] = self.selectedColor
-            self.program.draw('points', self.selectedPointIndex)
-
-        if self.highlightIndex is not None:
-            self.highlight_e['u_color'] = self.highlightColor
-            self.highlight_e.draw('lines', self.highlightIndex)
-            self.program['u_color'] = self.highlightColor
-            self.program.draw('points', self.highlightPointIndex)
-
-        # pr = cProfile.Profile()
-        # pr.enable()
-
-        self.layerLabels.draw()
+        self.nodeLabels.draw()
+        self.basemap.draw()
+        self.planes.draw()
         
- 
-        # pr.disable()
-        # s = Strion_drawngIO.StringIO()
-        # sortby = 'cumulative'
-        # ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-        # ps.print_stats()
-        # print s.getvalue()
+        self.verticals.draw()
+        self.edges.draw()
+        self.markers.draw()
+        
+        self.layerLabels.draw()
+
 
     def updateLayerSpacing(self, spacing=None):
 
@@ -1132,8 +683,7 @@ class Canvas(app.Canvas):
 
         # load the updated world vertex locations into the pick search array
         self.spacing = spacing
-
-        self.updatePickVertices()
+     
 
     def on_key_press(self, event):
         """
@@ -1158,6 +708,23 @@ class Canvas(app.Canvas):
             print("zRatio: ", self.zoomRatio)
             print("wFocus: ", self.wFocus)
             print("vFocus: ", self.vFocus)
+
+        elif (event.text == 'G'):
+            print("Client Count Animation")
+            self.clientCountAnimation()
+
+        elif (event.text == 'H'):
+            print("Client Count Hourly Animation")
+            self.clientHourAnimation()
+
+        elif (event.text == 'S'):
+            self.Pirouette()
+
+        elif (event.text == 'N'):
+            self.nextFrame()
+            
+        elif (event.text == 'P'):
+            self.prevFrame()        
 
         else:
             print("Key Press", event.key)
@@ -1193,24 +760,20 @@ class Canvas(app.Canvas):
             self.saveZoomAndPan()
 
     def worldToPixelCoords(self, wPoint):
-
         mView = self.view.dot(self.projection)
         x, y, z, w = wPoint.dot(mView)
-
         return self.nearPlaneToPixelCoords(x / w, y / w)
 
     def viewToPixelCoords(self, vPoint):
         x, y, z, w = vPoint.dot(self.projection)
         # Convert from homogenous Coordinates to NDC
         # and then scale to pixels
-
         return self.nearPlaneToPixelCoords(x / w, y / w)
 
     def nearPlaneToPixelCoords(self, nx, ny):
         w, h = self.size
         x = w * (nx + 1) / 2
         y = h * (1.0 - ny) / 2
-
         return (x, y)
 
     def pixelToNearPlaneCoords(self, x, y):
@@ -1221,7 +784,6 @@ class Canvas(app.Canvas):
         """
 
         w, h = self.size
-
         nx = 2.0 * x / w - 1
         ny = 1 - 2.0 * y / h
 
@@ -1293,21 +855,33 @@ class Canvas(app.Canvas):
         self.__dict__.update(kwargs)
 
         # Yaw and Pitch
-        self.yRot = min(self.yRot, 120)
-        self.yRot = max(self.yRot, -120)
+        #self.yRot = min(self.yRot, 120)
+        #self.yRot = max(self.yRot, -120)
         self.xRot = min(self.xRot, 120)
         self.xRot = max(self.xRot, -120)
-
+        
         # Prepare by moving the world so that the focus is at 0,0,0
-        self.view = translate(-self.wFocus[0:3])                    # Step5
+        self.pitch  = self.view = translate(-self.wFocus[0:3])                    # Step5
 
         # Yaw then pitch                                                      #
         # Step 6
+        
         self.view = self.view.dot(rotate(
             self.yRot, [0, 0, 1])).dot(rotate(self.xRot, [1, 0, 0]))
 
+
+        # For cylindrical Billboards adjust the pitch of the label to 
+        # match the camera, but maintain fixed roll and yaw.   The 
+        # effect is counter intuitive - by tracking pitch, the label appears 
+        # to maintain a constant pitch wrt the rest of the model, like for example 
+        # a lighthouse standing vertical on a plane.  By not adjusting yaw we get 
+        # cylindrical effect - in the yaw dimension the label always faces the camera:
+        
+        self.pitch = self.pitch.dot(rotate(self.xRot, [1, 0, 0]))      
+        
         # Now translate so that focus is at required location
         self.view = self.view.dot(translate(self.vFocus[0:3]))  # Step 7
+        self.pitch = self.pitch.dot(translate(self.vFocus[0:3]))
 
         self.updateDependents()
 
@@ -1338,7 +912,6 @@ class Canvas(app.Canvas):
 
         # Rotate and tilt the model
         elif event.is_dragging and event.buttons[0] == 0:
-            self.view = np.eye(4, dtype=np.float32)
             x0, y0 = event.last_event.pos[0], event.last_event.pos[1]
             x1, y1 = event.pos[0], event.pos[1]
             XA0, YA0 = self.pixelToAngle(float(x0), float(y0))
@@ -1370,7 +943,6 @@ class Canvas(app.Canvas):
                                  zoomRatio=zoomRatio)
 
         else:
-
             # Find objects under the mouse
             # Find edges and vertices that are close to a ray from the
             # camera (0,0,0) through the mouse position on the front
@@ -1381,42 +953,50 @@ class Canvas(app.Canvas):
             # Pick within +- p pixels.  Translating p to near plane coords
             p = 5
             tolerance = p * 2 * self.zoomRight / self.size[0]
-
-            res = self.closestEdge(x, y, tol=tolerance)
-
+  
+            res = self.markers.closestNode(x, y, tol=tolerance)
             if res:
-                edge, Z, t = res
-                p1, p2 = edge.edgeId
-
-                self.highlightT = t
-
-                if t < 0.15:
-                    self.highlight = p1.node
-                elif t > 0.85:
-                    self.highlight = p2.node
+                node, Z = res
+                t=0
+                self.markers.setHighlight(node)
+                self.edges.setHighlight(None)
+                self.highlight=node
+                self.wFocus=self.worldFocus(node)
+            else:
+                res = self.edges.closestEdge(x, y, tol=tolerance)
+                if res:
+                    edge, Z, t = res
+                    p1, p2 = edge.edgeId
+    
+                    self.highlightT = t
+                    
+                    
+                    if 0.15 < t < 0.85:
+                        self.highlight=edge
+                        self.markers.setHighlight(None)
+                        self.edges.setHighlight(edge)
+                        
+                        # Get the mouse hit coordinate in world coordinate space,
+                        # by linear interpolation between the end points of the edge
+        
+                    self.wFocus = self.worldFocus(edge, t)
                 else:
-                    self.highlight = edge
+                    
+                    return
 
-                # Get the mouse hit coordinate in world coordinate space,
-                # by linear interpolation between the end points of the edge
+            x1, y1 = self.worldToPixelCoords(self.wFocus)
 
-                self.wFocus = self.worldFocus(edge, t)
+            # and map the coordinate to view space (rotated and panned)
+            self.vFocus = self.wFocus.dot(self.view)
 
-                X, Y = self.pixelToNearPlaneCoords(x, y)
+            if self.highlight != self.highlighted:
+                print(("Mouseover %s %d %f" % (self.highlight.name, self.highlight.layerIndex, t)))
 
-                x1, y1 = self.worldToPixelCoords(self.wFocus)
+                self.showHighlight(self.highlight)
+                self.highlighted = self.highlight
 
-                # and map the coordinate to view space (rotated and panned)
-                self.vFocus = self.wFocus.dot(self.view)
-
-                if self.highlight != self.highlighted:
-                    print(("Mouseover %s %d %f" % (self.highlight.name, self.highlight.layerIndex, t)))
-
-                    self.showHighlight(self.highlight)
-                    self.highlighted = self.highlight
-
-                    self.update()
-
+                self.update()
+        
     def worldFocus(self, obj=None, t=0.5):
         """
         Return the position in model space of on edge
@@ -1425,63 +1005,24 @@ class Canvas(app.Canvas):
         if obj is None:
             obj = self.highlight
             t = self.highlightT
-
-        if obj is None:
-            pos = ([0,0,0,1])
+            pos =  np.array([0., 0., 0., 1.], dtype=np.float32)
             
         elif hasattr(obj,'index' ):
-            pos = self.worldVertexPositions[obj.index]
+            pos = self.markers.worldVertexPositions[obj.index]
 
         elif hasattr(obj,'points'):
             p1, p2 = obj.points
 
-            loc1 = self.worldVertexPositions[p1]
-            loc2 = self.worldVertexPositions[p2]
+            loc1 = self.edges.worldVertexPositions[p1]
+            loc2 = self.edges.worldVertexPositions[p2]
 
             # Linear interpolation -
             pos = loc1 + (loc2 - loc1) * t
         else:
-            pos = ([0,0,0,1])
+            pos =  np.array([0., 0., 0., 1.], dtype=np.float32)
 
         return pos
 
-    def closestEdge(self, x, y, tol=0.01):
-        """
-        Finds an edge that is closest to a ray
-        from camera through the mouse pointer
-        """
-
-        X1, Y1 = self.pixelToNearPlaneCoords(x, y)
-        #  Perspective Transformation to get a normalized screen view
-        mView = self.view.dot(self.projection)
-        # Now adjust the matrix so that the normalized perspective
-        # model is moved to mouse location 0,0
-        mView = mView.dot(translate([-X1, -Y1, 0]))
-
-        # Use Numpy to multiply all vertex locations by the mView matrix:
-        vertices = self.worldVertexPositions.dot(mView)
-
-        def searchForClosest(candidates):
-            # Create an array that contains edge end point locations.
-            # Return the edge that is closest to the mouse cursor,
-            # and within tolerance tol
-
-            coords = [(vertices[l.points[0]][:3],
-                       vertices[l.points[1]][:3])
-                      for l in candidates]
-            res = picker.pickEdge(coords, tol=tol)
-
-            if res:
-                closest, z, t = res
-                return (candidates[closest], z, t)
-
-        if self.selectedEdges:
-            links = list(set(self.model.edgeList)
-                         & (self.selectedEdges ))
-            return searchForClosest(links)
-
-        else:
-            return searchForClosest(self.model.edgeList)
 
     def on_mouse_press(self, event):
         if event.button == 0:
@@ -1534,7 +1075,7 @@ class Canvas(app.Canvas):
                     # click with distance between
                     # mouse and selected item more than 20 pixels
                     selectedEdgeList = None
-                    self.SelectAndNotify(self.highlighted, selectedEdgeList)
+                    self.SelectAndNotify(None, selectedEdgeList)
 
                 else:
                     # End of left mouse drag operation
@@ -1602,21 +1143,9 @@ class NetworkModel3D(object):
         vertices = kwargs.pop('vertices')
         edgeVertices = kwargs.pop('edgeVertices')
         self.viewLayers = kwargs.pop('viewLayers', None)
-
-        data = vertexBufferObj(vertices)
-        self.vbo = gloo.VertexBuffer(data)
-
-        edgeData = vertexBufferObj(edgeVertices)
-        self.edgeEndPointVbo = gloo.VertexBuffer(edgeData)
-
-        self.markers = np.array(nodeLayerIndices(network.nodeList),
-                           dtype=np.uint32)
-        self.edgeList=network.edgeList
-        
-        edgeEnds = [edge.points for edge in network.edgeList]
-        self.edges = np.array(edgeEnds, dtype=(np.uint32, 2))
-      
-        # self.edgeArray = network.edgeArray
+        #self.edgeList=network.edgeList
+        #self.nodeList=network.nodeList
+ 
 
         if self.viewLayers is None:
             self.layerCount = network.layerCount
@@ -1625,7 +1154,6 @@ class NetworkModel3D(object):
             self.layerList = list(set(network.LayerList)&set(self.viewLayers))
             self.layerCount = len (self.layerList)
 
-        self.vertexLocations = network.vertexLocations
         self.networkLayers = network.networkLayers
 
         self.NormalizedBoundingBox = network.NormalizedBoundingBox
@@ -1648,7 +1176,7 @@ class Panel3D(wx.Panel):
         self.canvas = Canvas(app="wx", parent=self, model=self.model, position=(0,0))
 
         self.Bind(wx.EVT_SIZE, self.OnSize)
-
+        
         self.canvas.native.Show()
 
     def OnSize(self, event):
@@ -1661,8 +1189,7 @@ class Panel3D(wx.Panel):
 
     def NotifySelected(self, obj, selectedEdges):
         print("Notify Selected Objects ...{}".format(obj))
-        ##self.parent.Set2DSelectionList(selectedEdges)
-        ##self.parent.context.SetItems([obj])
+        #self.parent.context.SetItems([obj])
 
     def setAnimator(self, keyFrames=None):
         self.canvas.setAnimator()
@@ -1711,11 +1238,3 @@ if __name__ == '__main__':
     myapp.MainLoop()
 
 
-# if __name__ == '__main__':
-
-    # gloo.gl.use_gl('desktop debug')
-    # net = Network(filename= 'DT4.js')
-    # c = Canvas(title="Graph", network=net)
-
-    # c.show()
-    # app.run()

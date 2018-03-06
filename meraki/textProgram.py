@@ -139,9 +139,10 @@ class FontManager(object):
 ##############################################################################
 
 
-def text_to_vbo(texts, coords, font, anchor_x, anchor_y, lowres_size):
+def text_to_vbo(texts, coords, layers, font, anchor_x, anchor_y, lowres_size):
     """Convert text characters to VBO"""
     text_vtype = np.dtype([('a_position', 'f4', 3),
+                           ('a_layer', 'f4', 1),
                            ('a_anchor', 'f4', 3),
                            ('a_texcoord', 'f4', 3)])
 
@@ -177,6 +178,7 @@ def text_to_vbo(texts, coords, font, anchor_x, anchor_y, lowres_size):
         descender = hyDescender
 
         anchor = coords[idx]
+        layer = layers[idx]
 
         for ii, char in enumerate(text):
             glyph = font[char]
@@ -190,6 +192,7 @@ def text_to_vbo(texts, coords, font, anchor_x, anchor_y, lowres_size):
             texcoords = [[u0, v0, 0], [u0, v1, 0], [u1, v1, 0], [u1, v0, 0]]
             vi = wi + ii * 4
             vertices['a_position'][vi:vi+4] = position
+            vertices['a_layer'][vi:vi+4] = layer
             vertices['a_anchor'][vi:vi+4] = anchor
             vertices['a_texcoord'][vi:vi+4] = texcoords
             x_move = glyph['advance'] * ratio + kerning
@@ -256,34 +259,41 @@ class textLabels(Program):
     VERTEX_SHADER = """
         uniform mat4 u_model;
         uniform mat4 u_view;
+        uniform mat4 u_pitch;
         uniform mat4 u_projection;
         uniform int  u_billboard;
         uniform vec4 u_color;
 
         uniform float u_offset;
         uniform float u_heightOffset;
-        uniform int    u_layerMap[32];
+        uniform int   u_layerMap[32];
 
 
         attribute vec3 a_position;
         attribute vec3 a_anchor;
+        attribute float a_layer;
         attribute vec3 a_texcoord;
 
         varying vec2 v_texcoord;
         varying vec4 v_color;
 
         float z_coord(float pos_z) {
-            int z_idx = int(pos_z);
+            int z_idx = int(a_layer);
             int lyr = u_layerMap[z_idx];
 
-            float z = lyr*u_offset - 1.0 + u_heightOffset;
+            float z = lyr*u_offset - 1.0 + u_heightOffset + pos_z;
             return z;
         }
 
         void main(void) {
             float height = z_coord(a_anchor.z);
 
-            if (u_billboard == 1) {
+            if (u_billboard == 2) {
+                 vec4 pos = (u_pitch * u_model * vec4(a_position.xy, 0, 0))
+                             + (u_view * vec4(a_anchor.xy, height, 1));
+                 gl_Position = u_projection * pos;
+                 } 
+            else if (u_billboard == 1) {
                  vec4 pos = (u_model * vec4(a_position.xy, 0, 0))
                              + (u_view * vec4(a_anchor.xy, height, 1));
                  gl_Position = u_projection * pos;
@@ -295,7 +305,7 @@ class textLabels(Program):
                  }
 
             v_texcoord = a_texcoord.xy;
-            int idx = int(a_anchor.z);
+            int idx = int(a_layer);
 
             if (u_layerMap[idx]  <= -1)
                  v_color = vec4(0,0,0,0);
@@ -420,7 +430,7 @@ class textLabels(Program):
         }
         """
 
-    def __init__(self, canvas, texts, coords, color='black', bold=False,
+    def __init__(self, canvas, texts, coords, layers, color='black', bold=False,
                  italic=False, face='OpenSans', font_size=12,
                  anchor_x='center', anchor_y='center',
                  font_manager=None, parent = None, **kwargs):
@@ -448,6 +458,7 @@ class textLabels(Program):
         self.color = color
         self.texts = texts
         self.coords = coords
+        self.layers = layers
         self.font_size = font_size
         self.textScale = font_size / 720
 
@@ -455,6 +466,7 @@ class textLabels(Program):
         canvas.registerDependent(self)
 
         self['u_view'] = canvas.view
+        self['u_pitch'] = canvas.pitch
         self['u_projection']  = canvas.projection
 
         for lyr in range(32):
@@ -468,7 +480,7 @@ class textLabels(Program):
         self['u_font_atlas_shape'] = self._font._atlas.shape[:2]
         self['u_offset'] = self.offset
         self['u_heightOffset']  = self.heightOffset
-        self.billboard = kwargs.pop('billboard', False)
+        self.billboard = kwargs.pop('billboard', None)
 
         set_state(blend=True, depth_test=False,
                   blend_func=('src_alpha', 'one_minus_src_alpha'))
@@ -511,6 +523,30 @@ class textLabels(Program):
         self._vertices = None
 
     @property
+    def zCoords(self):
+        return list(np.array(self._coords[:,2]))
+
+    @zCoords.setter
+    def zCoords(self, zLoc):
+        assert len(zLoc) == len(self._coords)
+        
+        for i,v in enumerate(zLoc):
+            self._coords[i][2]=v
+        
+        self._vertices = None
+    
+    @property
+    def layers(self):
+        return self._coords
+    
+    @layers.setter
+    def layers(self,lyrs):
+        for lyr in lyrs:
+            assert lyr >=0 and lyr<8
+        self._layers = lyrs
+        self._vertices = None
+
+    @property
     def font_size(self):
         """ The font size (in points) of the text
         """
@@ -535,8 +571,10 @@ class textLabels(Program):
         return self._billboard
 
     @billboard.setter
-    def billboard(self, enable):
-        if enable:
+    def billboard(self, mode):
+        if mode=='cylinder':
+            self._billboard = 2
+        elif mode == 'sphere':
             self._billboard = 1
         else:
             self._billboard = 0
@@ -595,7 +633,7 @@ class textLabels(Program):
             # we delay creating vertices because it requires a context,
             # which may or may not exist when the object is initialized
             self.canvas.context.flush_commands()  # flush GLIR commands
-            self._vertices = text_to_vbo(self._texts, self._coords, self._font,
+            self._vertices = text_to_vbo(self._texts, self._coords, self._layers, self._font,
                                           self._anchors[0], self._anchors[1],
                                           self._font._lowres_size)
 

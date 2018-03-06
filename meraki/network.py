@@ -1,8 +1,9 @@
-
+from __future__ import division
 import json
 import itertools
 import operator
 from math import sqrt, sin, cos, pi
+import numpy as np
 
 from streetmap import orthographicTransform
 
@@ -47,7 +48,7 @@ class EndPoint(object):
             kwargs = self.layer.window
         
         # Override the Node Capacity with the capacity of the underlying  edge
-        return self.edge.movementCount(**kwargs)
+        return self.edge.movementClientCount(**kwargs)
         
         
     def __getattr__(self, name):
@@ -76,8 +77,8 @@ class Edge(object):
         ep1 = EndPoint(self, n1)
         ep2 = EndPoint(self, n2)
         
-        ep1.edges=[(n2,self)]
-        ep2.edges=[(n1,self)]
+        ep1.edges=[(ep2,self)]
+        ep2.edges=[(ep1,self)]
         
         self.edgeId= tuple(sorted([ep1, ep2],key=operator.attrgetter('index')))
         self.points= (ep1.index,ep2.index)
@@ -111,7 +112,15 @@ class Node(object):
         NodeList.append(self)
    
     def clientCount(self, **kwargs):
-        return self.wap.Capacity
+        if kwargs=={}:
+            kwargs = self.layer.window        
+        
+        if len(self.edges) == 0: 
+            return 0
+        else:
+            return max((e.movementClientCount(**kwargs) for n,e in self.edges))
+        
+
         
     def __getattr__(self, name):
         return getattr(self.wap, name)
@@ -133,9 +142,8 @@ class Layer(object):
         self.nodeList=[]
         self.loadLayerNetwork(graph)
         
-    def loadLayerNetwork(self,graph):
+    def loadLayerNetwork(self, graph):
         # Create layer unique node and edge instances
-        
         
         for ap in graph:
             node = Node(ap, self)
@@ -145,12 +153,6 @@ class Layer(object):
             edge = Edge(e, self)
             self.edgeList.append(edge)
       
-            n1,n2 = edge.edgeId
-            
-            n1.edges.append((n2,edge))
-            n2.edges.append((n1,edge))
-        
-       #assert max(self.NodeDict) == len(self.NodeDict)-1 ,"Node Index Error"
             
     @property
     def edges(self):
@@ -190,20 +192,38 @@ class Network(object):
         self.layerCount=0
         self.LayerList=[]
         self.networkLayers=[]
+        self.maxWt=None
              
         if layers==[]:
-            log=ReadMerakiLogs()
-            layers.append(('WiFi', WAPGraph, {}))
+          
+            
+            log=ReadMerakiLogs()            
+            
+            #window= dict(days=[0,1,2,3,4], hours=[7,8,9, 16,17,18])
+            #Commute = log.subGraph(**window)
+            #layers.append(('Commute', Commute,window))
+        
+            #window = dict(days=[0,1,2,3,4], hours=[11,12,13])             
+            #lunchBreak=log.subGraph(**window)
+            #layers.append(('LunchBreak', lunchBreak, window))
                          
-            window = dict(days=[0,1,2,3,4], hours=[16,17,18])             
-            afternoonCommute=log.subGraph(**window)
-            layers.append(('afternoonCommute', afternoonCommute, window))
+            ##window = dict(days=[0,1,2,3,4], hours=[16,17,18])             
+            ##afternoonCommute=log.subGraph(**window)
+            ##layers.append(('AfternoonCommute', afternoonCommute, window))
 
+            #window = dict(days=range(5), hours=range(7) + range(19,24))
+            #nights=log.subGraph(**window)
+            #layers.append(('WeekdayNights', nights, window))            
             
-            window= dict(days=[0,1,2,3,4], hours=[6,7,8])
-            morningCommute = log.subGraph(**window)
-            layers.append(('morningCommute', morningCommute,window))
+            #window = dict(hours=range(7,18), days=[5,6])
+            #weekend=log.subGraph(**window)
+            #layers.append(('Weekend', weekend, window))            
             
+            #window = dict(days=[5,6], hours=range(6) + range(19,24))
+            #weekendNights=log.subGraph(**window)
+            #layers.append(('WeekendNights', weekendNights, window))                      
+
+            layers.append(('WiFi', WAPGraph, {}))
         
         for layerName, graph, window  in layers:
             """
@@ -219,14 +239,10 @@ class Network(object):
         self.NormalizeCoords()
         
         self.networkLayers=[n.layerIndex for n in endPointList]
-        
-        self.NormalizedBoundingBox = [x/1.0 for x in self.bbox]
-        
-        print(self.NormalizedBoundingBox)
+
+        print(self.bbox)
  
         print ("network created")
-        
-        
         
         
     def NormalizeCoords(self):
@@ -238,7 +254,9 @@ class Network(object):
         maxX,maxY = orthographicTransform(maxLat, maxLong, self.centLat, self.centLong)
         minX,minY = orthographicTransform(minLat, minLong, self.centLat, self.centLong)
 
-        self.scale = max([maxX - minX, maxY - minY]) / 1.8        
+        self.scale = max([maxX - minX, maxY - minY]) / 1.3     
+
+        self.NormalizedBoundingBox = [a/self.scale for a in [minX,minY,maxX,maxY]]
 
         layerCount = len(LayerDict)
         self.layerHeights = [ 2.0*idx/layerCount - 1.0
@@ -247,6 +265,11 @@ class Network(object):
         self.endPointLocations = [[0,0,0]] * len(endPointList)
         self.vertexLocations = []
         idx=0
+        
+        wts = np.array([n.clientCount() for n in endPointList], dtype = np.float32)
+        self.zScale= np.max(wts)
+        self.zEdgeAdjust = wts / self.zScale  
+ 
         for n in endPointList:
             if n.location:
                 lat, lng = n.location
@@ -259,16 +282,22 @@ class Network(object):
             x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
             
             #Scale to fit within a 1x1 cube for OpenGL 
-            n.coords = (x/self.scale, y/self.scale, n.layerIndex)
+            n.coords = [x/self.scale, y/self.scale, wts[idx]/self.zScale]
             
             n.idx=idx
-            self.endPointLocations[n.idx] = n.coords
+            self.endPointLocations[idx] = n.coords
             idx+=1
 
-            self.vertexLocations.append((n.coords[0], n.coords[1], n.layerIndex))
+            self.vertexLocations.append(n.coords)
         
         idx=0
         self.nodeLocations = [[0,0,0]] * len(NodeList)    
+        
+        wts =np.array([n.clientCount() for n in NodeList], dtype=np.float32)
+        assert np.max(wts) == self.zScale
+        self.zNodeAdjust = wts / self.zScale        
+        
+        
         for n in NodeList:
             if n.location:
                 lat, lng = n.location
@@ -281,14 +310,13 @@ class Network(object):
             x,y = orthographicTransform(lat,lng, self.centLat, self.centLong)
             
             #Scale to fit within a 1x1 cube for OpenGL 
-            n.coords = (x/self.scale, y/self.scale, n.layerIndex)
-            
-            n.idx=idx
-            self.nodeLocations[n.idx] = n.coords
+            n.coords = [x/self.scale, y/self.scale, wts[idx]/self.zScale]
+           
+            self.nodeLocations[idx] = n.coords
             idx+=1
 
-     
-
+  
+ 
     def BoundingBox(self):
         # Find a bounding box for all nodes in all layers
         nodeLocations = [n.location for n in NodeList if n.location != None]
@@ -300,10 +328,7 @@ class Network(object):
 
         return (minLat, minLong, maxLat, maxLong)
 
-    def MinLength(self):
-        return min(lyr.MinLength()
-                   for lyr in self.LayersDict.values() if lyr.MinLength > 0)
-
+    
     def ClientsAndServers(self, obj):
         selectedEdges = set()
 
@@ -315,8 +340,30 @@ class Network(object):
             selectedEdges = set(e for nap, e in obj.edges)
 
         return selectedEdges
-
-
+    
+    def updateZCoordinates(self):
+        # Change the node and edgepoint z coordinate information to
+        # track the result of the n.clientCount calculation
+        
+        # TBD this should be changed to support time filtering
+        
+        wts = [n.clientCount() for n in endPointList]
+        idx=0
+        self.zEdgeAdjust=np.array(wts, dtype=np.float32)
+        for n in endPointList:
+            n.coords[2] = wts[idx]/self.zScale
+            self.endPointLocations[n.idx] = n.coords
+            self.vertexLocations[idx]= n.coords    
+            idx+=1
+                
+        wts = [n.clientCount() for n in NodeList]
+        self.zNodeAdjust=np.array(wts, dtype=np.float32)
+        idx=0
+        for n in NodeList:
+            n.coords[2] = wts[idx]/self.zScale
+            self.nodeLocations[idx] = n.coords
+            idx+=1
+            
  
 def __test():
 

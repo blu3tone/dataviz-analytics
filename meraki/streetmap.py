@@ -13,8 +13,14 @@ def orthographicTransform(lat,lng, centLat, centLong):
     
 class Street(object):
     def __init__(self, record):
-        self.id = record['properties']['LINEARID']
-        self.name = record['properties']['FULLNAME']
+        try:
+            self.id = record['properties']['LINEARID']
+            self.name = record['properties']['FULLNAME']
+        except:
+            self.id = record['properties']['osm_id']
+            self.name = record['properties']['name']
+
+
         self.lineSegments =[]
         
         if record['geometry']['type']=='MultiLineString':
@@ -48,6 +54,8 @@ def streetBufferObj(vertices):
                                   ('a_fg_color', np.float32, 4),
                                   ('a_bg_color', np.float32, 4),
                                   ('a_size', np.float32, 1),
+                                  ('a_zAdjust', np.float32, 1),
+                                  ('a_colorAdjust', np.float32, 1),
                                   ('a_linewidth', np.float32, 1),
                                   ])
 
@@ -73,7 +81,8 @@ def streetBufferObj(vertices):
              
 def StreetModel(centLat, centLng, scale):
     
-    with open('data/nyc-streets.geojson') as f:
+    #with open('data/nyc-streets.geojson') as f:
+    with open('data/new-york_new-york_roads.geojson') as f:
         streets = json.load(f)
     
     vertexLocations = []  
@@ -111,7 +120,7 @@ def StreetModel(centLat, centLng, scale):
                     index0 = None
             
             if inScope:    
-                print("{:<18s} {}:".format(street.id, street.name))
+                print("{:<18} {}:".format(street.id, street.name))
             
             
     maxLat=max([lat for lng,lat in vertexLocations])

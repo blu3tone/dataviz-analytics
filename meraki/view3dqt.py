@@ -1175,35 +1175,6 @@ class Map3D(object):
         
         self.canvas.show()
 
-    def OnSize(self, event):
-
-        w, h = event.GetSize()
-        self.canvas.resize(w, h)
-
-    def Select(self, obj, selectedEdges):
-        self.canvas.Select(obj, selectedEdges)
-
-    def NotifySelected(self, obj, selectedEdges):
-        print("Notify Selected Objects ...{}".format(obj))
-        #self.parent.context.SetItems([obj])
-
-    def setAnimator(self, keyFrames=None):
-        self.canvas.setAnimator()
-
-    def OnAnimate(self):
-        self.canvas.OnAnimate()
-
-    def StartAnimation(self, event):
-        self.canvas.StartAnimation(event)
-
-    def AddKeyFrame(self, event):
-        self.canvas.AddKeyFrame(event)
-
-    def CloseAnimation(self, event):
-        self.canvas.CloseAnimation()
-
-    def Reset(self):
-        self.canvas.Reset()
 
 
 if __name__ == '__main__':

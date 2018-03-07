@@ -572,7 +572,7 @@ class verticalsProgram(graphProgram):
 
 def colorSelect(wt):
     # Color code from Red for max to cyan for min
-    return (0.5*(1+wt), (1-wt), (1-wt), 0.2 + 0.8*wt)
+    return (0.4 + 0.6*wt, (1-wt), (1-wt), 0.3 + 0.7*wt)
 
 class edgesProgram(graphProgram):
     # GL setup to draw edges in a graph structure

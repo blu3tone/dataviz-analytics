@@ -107,7 +107,8 @@ if 'tagline' in esinfo and esinfo['tagline'] == 'You Know, for Search':
     for ap in apLocation:
         _source = ap['_source']
         APInformation[_source['ap_id']] = dict(name=_source['ap_name'],location=[_source['geo']['coordinates']['lat'],_source['geo']['coordinates']['lon']])
-elif APInformation == dict():
+
+if APInformation == dict():
     with open('data/AccessPoints.json') as APfile:    
         APInformation = json.load(APfile)
         APfile.close()

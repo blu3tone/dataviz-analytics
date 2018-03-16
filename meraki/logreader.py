@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 from pytz import timezone,utc
 import itertools
 import numpy as np
-
+# "pip install elasticsearch" for python2.x
+# "pip3 install elasticsearch" for python3.x
+from elasticsearch import Elasticsearch
 import os
 from collections import Counter
 import  re
@@ -89,12 +91,28 @@ def eventTimeInTimeWindow(eventTime,  **kwargs):
     d,h = time2DayAndHour(eventTime)
     
     return (start<=eventTime<=end  and dayOfWeek(d) in days and h%24 in hours)
- 
- 
-with open('data/AccessPoints.json') as APfile:    
-    APInformation = json.load(APfile)
-    APfile.close()
-            
+
+esURL = "http://76.103.116.89:9200"
+esauthargs = ('elastic','blu3tone.dataviz')
+es = Elasticsearch(esURL, http_auth=esauthargs)
+esinfo = es.info()
+APInformation = dict()
+
+if 'tagline' in esinfo and esinfo['tagline'] == 'You Know, for Search':
+    apLocation=es.search(
+        index='accesspoint',
+        doc_type='record',
+        params={'size':1000})['hits']['hits']
+    
+    for ap in apLocation:
+        _source = ap['_source']
+        APInformation[_source['ap_id']] = dict(name=_source['ap_name'],location=[_source['geo']['coordinates']['lat'],_source['geo']['coordinates']['lon']])
+
+if APInformation == dict():
+    with open('data/AccessPoints.json') as APfile:    
+        APInformation = json.load(APfile)
+        APfile.close()
+
 with open('data/prefixes.json') as PFXfile:
     ethernetPrefixDict = json.load(PFXfile)
 

@@ -12,7 +12,8 @@ import numpy as np
 # "pip install elasticsearch" for python2.x
 # "pip3 install elasticsearch" for python3.x
 from elasticsearch import Elasticsearch
-import os
+import os, sys
+from glob import glob
 from collections import Counter
 import  re
 re_digits= re.compile(r'(\d+)')
@@ -97,7 +98,21 @@ esauthargs = ('elastic','blu3tone.dataviz')
 es = Elasticsearch(esURL, http_auth=esauthargs)
 esinfo = es.info()
 APInformation = dict()
+PedestrianInfo = dict()
 
+# open up the csv files
+def find_ext(dir, pattern, ext):
+    return glob(os.path.join(dir,"{}.{}".format(pattern, ext)))
+
+askeys=['Pedestrians','weather_summary','temperature','location','precipitation']
+
+def copyPedestrianData(pedestrianCnts):
+    for _source in pedestrianCnts:
+        _k = (_source['lat'],_source['lon'],_source['@timestamp'])
+        if 'Visitors' in _source:
+            _source['Pedestrians'] = _source['Visitors']
+        PedestrianInfo[_k] = dict(filter(lambda i: i[0] in askeys, _source.items()))
+    
 if 'tagline' in esinfo and esinfo['tagline'] == 'You Know, for Search':
     apLocation=es.search(
         index='accesspoint',
@@ -108,10 +123,43 @@ if 'tagline' in esinfo and esinfo['tagline'] == 'You Know, for Search':
         _source = ap['_source']
         APInformation[_source['ap_id']] = dict(name=_source['ap_name'],location=[_source['geo']['coordinates']['lat'],_source['geo']['coordinates']['lon']])
 
+    page = es.search(index = 'pedestrian', doc_type = 'doc', scroll = '2m', size = 10000)
+    sid = page['_scroll_id']
+    scroll_size = page['hits']['total']
+    print("{} out of {}".format(len(page['hits']['hits']), page['hits']['total']), file=sys.stderr)
+    
+    if scroll_size == 0:
+        print("No data", file=sys.stderr)
+    else:
+        copyPedestrianData(map(lambda hit: hit['_source'], page['hits']['hits']))
+
+        while (scroll_size > 0):
+            print("Scrolling...", file=sys.stderr)
+            page = es.scroll(scroll_id = sid, scroll = '2m')
+            # Update the scroll ID
+            sid = page['_scroll_id']
+            # Get the number of results that we returned in the last scroll
+            pedestrianCnts = page['hits']['hits']
+            scroll_size = len(pedestrianCnts)
+            print("scroll size: " + str(scroll_size), file = sys.stderr)
+            copyPedestrianData(map(lambda hit: hit['_source'], pedestrianCnts))
+
 if APInformation == dict():
     with open('data/AccessPoints.json') as APfile:    
         APInformation = json.load(APfile)
         APfile.close()
+
+def addtimestamp(record):
+    if 'hour_beginning' in record:
+        dto_naive = datetime.strptime(record['hour_beginning'], "%Y-%m-%d %H:%M:%S")
+        record['@timestamp'] = tz.localize(dto_naive).strftime("%Y-%m-%dT%H:%M:%S.000%z")
+    return record
+
+pedestrianFolder = "../motionloft/data"
+if PedestrianInfo == dict():
+    for fname in find_ext(pedestrianFolder, "*_csv", "jsonl"):
+        with open(fname) as pdata:
+            copyPedestrianData(map(addtimestamp, map(json.loads, pdata)))
 
 with open('data/prefixes.json') as PFXfile:
     ethernetPrefixDict = json.load(PFXfile)

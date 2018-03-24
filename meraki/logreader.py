@@ -99,6 +99,7 @@ es = Elasticsearch(esURL, http_auth=esauthargs)
 esinfo = es.info()
 APInformation = dict()
 PedestrianInfo = dict()
+BigBellyInfo = dict()
 
 # open up the csv files
 def find_ext(dir, pattern, ext):
@@ -114,14 +115,18 @@ def copyPedestrianData(pedestrianCnts):
         PedestrianInfo[_k] = dict(filter(lambda i: i[0] in askeys, _source.items()))
     
 if 'tagline' in esinfo and esinfo['tagline'] == 'You Know, for Search':
-    apLocation=es.search(
-        index='accesspoint',
-        doc_type='record',
-        params={'size':1000})['hits']['hits']
+    apLocation = es.search(index = 'accesspoint', doc_type='record', params={'size':1000})['hits']['hits']
     
     for ap in apLocation:
         _source = ap['_source']
         APInformation[_source['ap_id']] = dict(name=_source['ap_name'],location=[_source['geo']['coordinates']['lat'],_source['geo']['coordinates']['lon']])
+
+    bigbelly = es.search(index = 'bigbelly', doc_type='doc', params={'size':1000})['hits']['hits']
+
+    _filters = ['Serial', 'beat', 'source']
+    for b in bigbelly:
+        _source = b['_source']
+        BigBellyInfo[_source['Serial']] = dict(filter(lambda i: i[0] not in _filters, _source.items()))
 
     page = es.search(index = 'pedestrian', doc_type = 'doc', scroll = '2m', size = 10000)
     sid = page['_scroll_id']
@@ -147,7 +152,17 @@ if 'tagline' in esinfo and esinfo['tagline'] == 'You Know, for Search':
 if APInformation == dict():
     with open('data/AccessPoints.json') as APfile:    
         APInformation = json.load(APfile)
-        APfile.close()
+
+def copyBigBellyData(records):
+    for r in records:
+        r['@timestamp'] = r['timestamp']+'T00:00:00.000-04:00'
+        BigBellyInfo[r.pop('Serial')] = r
+
+bigbellyfolder = "../bigbelly/data"
+if BigBellyInfo == dict():
+    for fname in find_ext(bigbellyfolder, "data*", "jsonl"):
+        with open(fname) as bbfile:
+            copyBigBellyData(map(json.loads, bbfile))
 
 def addtimestamp(record):
     if 'hour_beginning' in record:

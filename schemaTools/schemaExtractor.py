@@ -44,7 +44,7 @@ def parse(fileList):
         try:
             with open(filename) as f:
                 if filename.endswith('.jsonl'):
-                    data.append((json.loads(l) for l in f.readlines()))
+                    data.append(map(json.loads, f))
                 else:
                     data.append(json.loads(f.read()))
         except Exception, e:
@@ -71,7 +71,7 @@ def parse(fileList):
 
     mySchema = {}
     for objs in data:
-        if type(objs) is not dict:
+        if type(objs) is list:
             for obj in objs:
                 try:
                     parseInstToSchema(obj, mySchema, '_')

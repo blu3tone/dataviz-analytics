@@ -1,0 +1,230 @@
+[
+    {
+        "ap_id": 149624924913904,
+        "cli_mac": "e8:b2:ac:0e:2e:70",
+        "time_f": 1517324942.33601,
+        "el_type": "association",
+        "details": {
+            "radio": "1",
+            "vap": "0",
+            "client_mac": "E8:B2:AC:0E:2E:70",
+            "channel": "48",
+            "rssi": "19",
+            "aid": "28273800"
+        },
+        "cli_key": "k8046f3",
+        "cli_name": "Hannahs-iPad"
+    },
+    {
+        "ap_id": 6006960,
+        "cli_mac": "",
+        "time_f": 1527366474.6711,
+        "el_type": "auto_rf_channel_change",
+        "details": {
+            "radio": "1",
+            "oldChan": "44/40",
+            "newChan": "36/40",
+            "reason": "6"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 149624924909984,
+        "cli_mac": "",
+        "time_f": 1527363888.584001,
+        "el_type": "bcast_deauth_attack",
+        "details": {
+            "vap": "2",
+            "bssid": "8A:15:04:7F:B1:A0",
+            "src": "8A:15:04:7F:B1:A0",
+            "radio": "0",
+            "channel": "11",
+            "rssi": "17"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 6005200,
+        "cli_mac": "",
+        "time_f": 1526992388.449,
+        "el_type": "device_packet_flood",
+        "details": {
+            "radio": "1",
+            "state": "end",
+            "alarm_id": "7",
+            "reason": "received_packet"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 15929760,
+        "cli_mac": "1c:e1:92:48:41:4c",
+        "time_f": 1526685742.661,
+        "el_type": "wpa_deauth",
+        "details": {
+            "radio": "0",
+            "vap": "1",
+            "client_mac": "1C:E1:92:48:41:4C",
+            "aid": "197052973"
+        },
+        "cli_key": "k3e70b9",
+        "cli_name": "android-adb94646f0236fdc"
+    },
+    {
+        "ap_id": 15929760,
+        "cli_mac": "1c:e1:92:48:41:4c",
+        "time_f": 1526685744.94101,
+        "el_type": "wpa_auth",
+        "details": {
+            "radio": "0",
+            "vap": "1",
+            "client_mac": "1C:E1:92:48:41:4C",
+            "aid": "1003047417"
+        },
+        "cli_key": "k3e70b9",
+        "cli_name": "android-adb94646f0236fdc"
+    },
+    {
+        "ap_id": 293108,
+        "cli_mac": "00:cd:fe:b6:a3:59",
+        "time_f": 1526699459.139001,
+        "el_type": "splash_auth",
+        "details": {
+            "mac": "00:CD:FE:B6:A3:59",
+            "duration": "86400",
+            "vap": "0",
+            "wired_vlan": "-1",
+            "download": "2097152bps",
+            "upload": "2097152bps"
+        },
+        "cli_key": "kb97a33",
+        "cli_name": "iPhone"
+    },
+    {
+        "ap_id": 293108,
+        "cli_mac": "",
+        "time_f": 1526699496.214011,
+        "el_type": "mac_spoofing_attack",
+        "details": {
+            "vap": "0",
+            "bssid": "02:18:1A:04:78:F4",
+            "src": "02:18:1A:04:78:F4",
+            "dst": "FF:FF:FF:FF:FF:FF",
+            "radio": "1",
+            "channel": "36",
+            "rssi": "17",
+            "fc_type": "0",
+            "fc_subtype": "12"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 6006960,
+        "cli_mac": "",
+        "time_f": 1526737008.721,
+        "el_type": "events_dropped2",
+        "details": {
+            "n": "21",
+            "type": "adhoc_network"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 149624924910176,
+        "cli_mac": "",
+        "time_f": 1526743415.322001,
+        "el_type": "dfs_event",
+        "details": {
+            "channel": "128",
+            "radio": "1"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 293088,
+        "cli_mac": "",
+        "time_f": 1527359218.570623,
+        "el_type": "channel_scan",
+        "details": {
+            "active": "0",
+            "radio": "0",
+            "channel": "11",
+            "skip": "0",
+            "clients": "0",
+            "mesh_in": "0",
+            "mesh_out": "0"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 149624924913904,
+        "cli_mac": "fc:2d:5e:6c:9f:85",
+        "time_f": 1527360612.146,
+        "el_type": "cf_block",
+        "details": {
+            "url": "http://goupdate.3g.cn/GOClientData/DR?ptl=10&amp;is_zip=1",
+            "categories": ""
+        },
+        "cli_key": "kaab978",
+        "cli_name": "android-b399c22b6df41256"
+    },
+    {
+        "ap_id": 6005680,
+        "cli_mac": "",
+        "time_f": 1527363882.75495,
+        "el_type": "carrier_event",
+        "details": {
+            "device": "wired0",
+            "carrier": "false"
+        },
+        "cli_key": "?",
+        "cli_name": null
+    },
+    {
+        "ap_id": 6014352,
+        "cli_mac": "64:5a:ed:39:07:5b",
+        "time_f": 1527369252.381,
+        "el_type": "association_reject",
+        "details": {
+            "load": "139",
+            "best_ap": "192.168.10.12",
+            "best_ap_load": "6",
+            "best_ap_rssi": "34"
+        },
+        "cli_key": "k09fd85",
+        "cli_name": "iPhonedeShihan"
+    },
+    {
+        "ap_id": 308622,
+        "cli_mac": "04:4f:4c:4d:a4:d9",
+        "time_f": 1527684458.697001,
+        "el_type": "disassociation",
+        "details": {
+            "radio": "0",
+            "vap": "0",
+            "client_mac": "04:4F:4C:4D:A4:D9",
+            "channel": "11",
+            "reason": "3",
+            "instigator": "2",
+            "duration": "0.968000",
+            "full_conn": "-57054.327030886",
+            "http_resp": "0.848000",
+            "arp_resp": "0.764000001",
+            "arp_src": "10.27.205.22",
+            "dns_server": "10.128.128.128",
+            "dns_req_rtt": "0.040000",
+            "dns_resp": "0.816000001",
+            "dhcp_failed": "1",
+            "aid": "1452627374"
+        },
+        "cli_key": "k1bcd16",
+        "cli_name": null
+    }
+]
